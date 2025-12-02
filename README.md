@@ -27,7 +27,7 @@ Users can:
 - 💻 Interact with the agent with a **TUI interface**.
 
 <div align="center">
-    <img src="assets/white_collar_agent_demo.png" alt="Demo" width="500"/>
+    <img src="assets/white_collar_agent_demo.PNG" alt="Demo" width="720"/>
 </div>
 
 This makes it an ideal tool for organisations, researchers, and developers exploring **System-based agentic AI**, **runtime code generation**, and **autonomous execution** to automate their workflows and achieve results.
