@@ -28,6 +28,8 @@ if False:  # pragma: no cover
 class _ConversationLog(_BaseLog):
     """RichLog wrapper with robust wrapping + reflow on resize."""
 
+    can_focus = True
+
     def __init__(self, *args, **kwargs) -> None:
         # RichLog params: wrap off by default, min_width=78; override both
         kwargs.setdefault("markup", True)
@@ -265,7 +267,7 @@ class _CraftApp(App):
     """
 
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
+        ("ctrl+q", "quit", "Quit"),
     ]
 
     status_text = var("Status: Idle")
