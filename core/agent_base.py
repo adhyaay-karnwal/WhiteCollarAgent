@@ -120,9 +120,9 @@ class AgentBase:
             self.triggers,
             db_interface=self.db_interface,
             event_stream_manager=self.event_stream_manager,
+            state_manager=self.state_manager,
         )
 
-        self.task_manager.attach_state_manager(self.state_manager)
         InternalActionInterface.initialize(
             self.llm,
             self.task_manager,
