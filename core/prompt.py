@@ -161,11 +161,6 @@ Here is your goal:
 Your job is to choose the best action from the action library and prepare the input parameters needed to run it immediately.
 </objective>
 
-<context>
-Use the task context to understand the current situation to craft the input parameters:
-Task / step context: {context}
-</context>
-
 <actions>
 Here are the available actions, including their descriptions and input schema:
 {action_candidates}
@@ -214,10 +209,10 @@ Here is your goal:
 Your job is to select the next action that should run and provide the input parameters so it can be executed immediately.
 </objective>
 
-<context>
-Use the task context to understand the current situation to craft the input parameters:
-Task / step context: {context}
-</context>
+<reasoning>
+Here is your reasoning of the current step:
+{reasoning}
+</reasoning>
 
 <actions>
 This is the list of action candidates, each including descriptions and input schema:

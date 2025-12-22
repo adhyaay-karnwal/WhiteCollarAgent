@@ -53,8 +53,6 @@ class ActionRouter:
         self,
         query: str,
         action_type: Optional[str] = None,
-        *,
-        context: str = "",
     ) -> Dict[str, Any]:
         """
         default action selection function when not in a task
@@ -84,7 +82,6 @@ class ActionRouter:
         prompt = SELECT_ACTION_PROMPT.format(
             query=query,
             action_candidates=self._format_candidates(action_candidates),
-            context=self._format_context(context),
         )
 
         decision = await self._prompt_for_decision(prompt)
@@ -101,8 +98,7 @@ class ActionRouter:
         query: str,
         action_type: Optional[str] = None,
         GUI_mode=False,
-        *,
-        context: str = "",
+        reasoning: str = "",
     ) -> Dict[str, Any]:
         """
         When a task is running, this action selection will be used.
@@ -137,7 +133,7 @@ class ActionRouter:
             })
     
         # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=2)
+        candidate_names = self.action_library.search_action(query, top_k=7)
         logger.info(f"ActionRouter found candidate actions: {candidate_names}")
         for name in candidate_names:
             act = self.action_library.retrieve_action(name)
@@ -161,7 +157,7 @@ class ActionRouter:
         # Build the instruction prompt for the LLM
         prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             query=query,
-            context=self._format_context(context),
+            reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
             action_name_candidates=self._format_action_names(action_name_candidates),
         )
@@ -291,7 +287,7 @@ class ActionRouter:
             return "[]"
         return json.dumps(names, indent=2, ensure_ascii=False)
 
-    def _format_context(self, context: str | list | dict | None) -> str:
+    def _format_reasoning(self, context: str | list | dict | None) -> str:
         if context is None:
             return ""
         if isinstance(context, (list, dict)):
