@@ -55,7 +55,7 @@ class EmbeddingInterface:
         self.model = ctx["model"]
         self.client = ctx["client"]
         self._gemini_client = ctx["gemini_client"]
-        self.ollama_url = ctx["remote_url"]
+        self.remote_url = ctx["remote_url"]
 
         if ctx["byteplus"]:
             self.api_key = ctx["byteplus"]["api_key"]
@@ -139,7 +139,8 @@ class EmbeddingInterface:
                 "model": self.model,
                 "prompt": text,  # Ollama accepts "prompt" for /api/embeddings
             }
-            response = requests.post(self.ollama_url, json=payload, timeout=120)
+            url: str = f"{self.remote_url.rstrip('/')}/embeddings"
+            response = requests.post(url, json=payload, timeout=120)
             response.raise_for_status()
             result = response.json()
             # Ollama returns {"embedding": [floats]}
