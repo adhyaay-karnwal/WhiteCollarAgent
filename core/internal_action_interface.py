@@ -10,7 +10,7 @@ from core.llm_interface import LLMInterface
 from core.vlm_interface import VLMInterface
 from core.task.task_manager import TaskManager
 from core.state.state_manager import StateManager
-from core.state.state_session import StateSession
+from core.state.agent_state import STATE
 from datetime import datetime
 from core.logger import logger
 from pathlib import Path
@@ -89,9 +89,8 @@ class InternalActionInterface:
 
         InternalActionInterface.state_manager.record_agent_message(message)
 
-        state_session = StateSession.get_or_none()
-        if state_session and state_session.session_id:
-            session_id = state_session.session_id
+        if STATE and STATE.session_id:
+            session_id = STATE.session_id
             event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
             if event_stream_manager.get_stream(session_id) is None:
                 event_stream_manager.create_stream(session_id)
@@ -114,9 +113,8 @@ class InternalActionInterface:
 
         InternalActionInterface.state_manager.record_agent_message(question)
 
-        state_session = StateSession.get_or_none()
-        if state_session and state_session.session_id:
-            session_id = state_session.session_id
+        if STATE and STATE.session_id:
+            session_id = STATE.session_id
             event_stream_manager = InternalActionInterface.state_manager.event_stream_manager
             if event_stream_manager.get_stream(session_id) is None:
                 event_stream_manager.create_stream(session_id)
@@ -131,13 +129,11 @@ class InternalActionInterface:
     # ───────────────── CLI and GUI mode ─────────────────
     @staticmethod
     def switch_to_CLI_mode():
-        state_session = StateSession.get()
-        state_session.update_gui_mode(False)
+        STATE.update_gui_mode(False)
     
     @staticmethod
     def switch_to_GUI_mode():
-        state_session = StateSession.get()
-        state_session.update_gui_mode(True)
+        STATE.update_gui_mode(True)
 
     # ───────────────── Task Management ─────────────────
     @classmethod
@@ -158,8 +154,7 @@ class InternalActionInterface:
         """
         End the task as 'completed'. If task_id is None, tries the active one for this session.
         """
-        state_session = StateSession.get()
-        session_id = state_session.session_id
+        session_id = STATE.session_id
         if not session_id:
             return {"status": "error", "error": "no_active_task"}
         try:
@@ -174,8 +169,7 @@ class InternalActionInterface:
         """
         End the task as 'cancelled' (aborted by user). If task_id is None, tries the active one for this session.
         """
-        state_session = StateSession.get()
-        session_id = state_session.session_id
+        session_id = STATE.session_id
         if not session_id:
             return {"status": "error", "error": "no_active_task"}
         try:
@@ -190,8 +184,7 @@ class InternalActionInterface:
         """
         End the task as 'error'. If task_id is None, tries the active one for this session.
         """
-        state_session = StateSession.get()
-        session_id = state_session.session_id
+        session_id = STATE.session_id
         if not session_id:
             return {"status": "error", "error": "no_active_task"}
         try:
@@ -211,8 +204,7 @@ class InternalActionInterface:
         Advance to the next step. If update_plan=True, request the planner
         to update the plan and advance to the next (possibly newly created) step.
         """
-        state_session = StateSession.get()
-        session_id = state_session.session_id
+        session_id = STATE.session_id
         if not session_id:
             return {"status": "error", "error": "no_active_task"}
         try:

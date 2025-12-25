@@ -11,7 +11,7 @@ from core.prompt import (
     POLICY_PROMPT,
 )
 from core.state.state_manager import StateManager
-from core.state.state_session import StateSession
+from core.state.agent_state import STATE
 
 """
 core.context_engine
@@ -101,8 +101,7 @@ class ContextEngine:
     def create_system_conversation_history(self):
         """Return formatted conversation history for the current session."""
 
-        state_session = StateSession.get()
-        conversation_state = state_session.conversation_state
+        conversation_state = STATE.conversation_state
 
         if conversation_state:
             return (
@@ -114,8 +113,7 @@ class ContextEngine:
     def create_system_event_stream_state(self):
         """Return formatted event stream context for the current session."""
 
-        state_session = StateSession.get()
-        event_stream = state_session.event_stream
+        event_stream = STATE.event_stream
 
         if event_stream:
             return (
@@ -127,8 +125,7 @@ class ContextEngine:
     def create_system_task_state(self):
         """Return formatted task/plan state for the current session."""
 
-        state_session = StateSession.get()
-        current_task = state_session.current_task
+        current_task = STATE.current_task
 
         if current_task:
             return "\nThe plan of the current on-going task:" + f"\n{current_task}"

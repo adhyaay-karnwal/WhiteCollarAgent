@@ -45,7 +45,8 @@ from core.database_interface import DatabaseInterface
 from core.logger import logger
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
-from core.state.state_session import StateSession
+from core.state.agent_state import STATE
+from core.gui.handler import GUIHandler
 from core.trigger import Trigger, TriggerQueue
 from core.prompt import STEP_REASONING_PROMPT
 from core.config import MAX_ACTIONS_PER_TASK
@@ -122,8 +123,7 @@ class AgentBase:
 
         # global state
         AgentBase.state_manager = StateManager(
-            self.event_stream_manager,
-            vlm_interface=self.vlm,
+            self.event_stream_manager
         )
         self.context_engine = ContextEngine(state_manager=AgentBase.get_state_manager())
         self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
@@ -206,18 +206,18 @@ class AgentBase:
             # 1. Start Session
             # ===================================
             await AgentBase.get_state_manager().start_session(session_id, gui_mode)
-            state_session = StateSession.get()
 
             # ===================================
             # 2. Handle GUI mode
             # ===================================
             logger.debug(f"[GUI MODE FLAG] {gui_mode}")
-            logger.debug(f"[GUI MODE FLAG - state] {state_session.gui_mode}")
+            logger.debug(f"[GUI MODE FLAG - state] {STATE.gui_mode}")
 
             # GUI-mode handling
-            if state_session.gui_mode:
+            if STATE.gui_mode:
                 logger.debug("[GUI MODE] Entered GUI mode.")
-                screen_md = AgentBase.get_state_manager().get_screen_state()
+                png_bytes = GUIHandler.get_screen_state()
+                screen_md = self.vlm_interface.scan_ui_bytes(png_bytes, use_ocr=False)
 
                 if self.event_stream_manager:
                     self.event_stream_manager.log(
@@ -293,7 +293,7 @@ class AgentBase:
                 action_output = await self.action_manager.execute_action(
                     action=action,
                     context=reasoning if reasoning else query,
-                    event_stream=state_session.event_stream,
+                    event_stream=STATE.event_stream,
                     parent_id=parent_id,
                     session_id=session_id,
                     is_running_task=is_running_task,
@@ -311,7 +311,7 @@ class AgentBase:
             AgentBase.get_state_manager().bump_event_stream(new_session_id)
 
             # Schedule next trigger if continuing a task
-            await self._create_new_trigger(new_session_id, action_output, state_session)
+            await self._create_new_trigger(new_session_id, action_output, STATE)
 
         except Exception as e:
             # log error without raising again
@@ -339,7 +339,7 @@ class AgentBase:
 
                     # Schedule fallback follow-up only if action_output exists
                     logger.debug("[AGENT BASE] Failed action so create new trigger")
-                    await self._create_new_trigger(session_to_use, action_output, state_session)
+                    await self._create_new_trigger(session_to_use, action_output, STATE)
 
             except Exception:
                 logger.error("[REACT ERROR] Failed to log to event stream or create trigger", exc_info=True)
@@ -467,7 +467,7 @@ class AgentBase:
         # All retries exhausted — fail fast with a clear error
         raise RuntimeError("Failed to obtain valid reasoning from LLM") from last_error
 
-    async def _create_new_trigger(self, new_session_id, action_output, state_session):
+    async def _create_new_trigger(self, new_session_id, action_output, STATE):
         """
         Schedule the next trigger if a task is running.
         Fully wrapped in try/except so errors do not break the main REACT loop.
@@ -507,7 +507,7 @@ class AgentBase:
                         session_id=new_session_id,
                         payload={
                             "parent_action_id": parent_action_id,
-                            "gui_mode": state_session.gui_mode,
+                            "gui_mode": STATE.gui_mode,
                         },
                     )
                 )
