@@ -12,6 +12,7 @@ from core.database_interface import DatabaseInterface
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.config import AGENT_WORKSPACE_ROOT
 from core.state.state_manager import StateManager
+from core.state.agent_state import STATE
 
 class TaskManager:
     def __init__(
@@ -324,9 +325,9 @@ class TaskManager:
             f"Task ended with status '{status}'. {note or ''}",
             display_message=f"Task {wf.name} → {status}",
         )
-        self.state_manager.set_agent_property("current_task_id", "")
-        self.state_manager.set_agent_property("action_count", 0)
-        self.state_manager.set_agent_property("token_count", 0)
+        STATE.set_agent_property("current_task_id", "")
+        STATE.set_agent_property("action_count", 0)
+        STATE.set_agent_property("token_count", 0)
         # purge any queued triggers for the session
         try:
             await self.triggers.remove_sessions([wf.id])

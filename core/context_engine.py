@@ -82,7 +82,7 @@ class ContextEngine:
 
     def create_system_agent_state(self):
         """Return formatted agent properties for the current session."""
-        agent_properties = self.state_manager.get_agent_properties()
+        agent_properties = STATE.get_agent_properties()
 
         if agent_properties:
             prompt = AGENT_STATE_PROMPT.format(

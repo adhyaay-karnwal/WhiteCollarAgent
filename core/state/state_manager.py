@@ -169,21 +169,3 @@ class StateManager:
     def remove_active_task(self) -> None:
         self.task = None
         STATE.update_current_task(None) 
-
-    def set_agent_property(self, key, value):
-        """
-        Sets a global agent property (not specific to any task).
-        """
-        STATE.agent_properties.set_property(key, value)
-
-    def get_agent_property(self, key, default=None):
-        """
-        Retrieves a global agent property.
-        """
-        return STATE.agent_properties.get_property(key, default)
-
-    def get_agent_properties(self):
-        """
-        Retrieves all global agent properties.
-        """
-        return STATE.agent_properties.to_dict()

@@ -20,6 +20,7 @@ from openai import OpenAI
 from core.models.factory import ModelFactory
 from core.models.types import InterfaceType
 from core.google_gemini_client import GeminiAPIError, GeminiClient
+from core.state.agent_state import STATE
 from decorators import profiler, profile, log_events
 
 # Logging setup — fall back to a basic logger if the project‑level logger
@@ -51,7 +52,7 @@ class LLMInterface:
         model: Optional[str] = None,
         db_interface: Optional[Any] = None,
         temperature: float = 0.0,
-        max_tokens: int = 8000,
+        max_tokens: int = 8000
     ) -> None:
         self.db_interface = db_interface
         self.temperature = temperature

@@ -77,17 +77,6 @@ class AgentBase:
     * `_build_db_interface`           → point to another Mongo/Chroma DB
     """
 
-    state_manager: Optional[StateManager] = None
-
-    @classmethod
-    def get_state_manager(cls) -> StateManager:
-        if cls.state_manager is None:
-            raise RuntimeError(
-                "StateManager not initialized. "
-                "Create an AgentBase instance first."
-            )
-        return cls.state_manager
-
     def __init__(
         self,
         *,
@@ -122,14 +111,14 @@ class AgentBase:
         self.triggers = TriggerQueue(llm=self.llm)
 
         # global state
-        AgentBase.state_manager = StateManager(
+        self.state_manager = StateManager(
             self.event_stream_manager
         )
-        self.context_engine = ContextEngine(state_manager=AgentBase.get_state_manager())
+        self.context_engine = ContextEngine(state_manager=self.state_manager)
         self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
 
         self.action_manager = ActionManager(
-            self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, AgentBase.get_state_manager()
+            self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, self.state_manager
         )
         self.action_router = ActionRouter(self.action_library, self.llm, self.context_engine)
 
@@ -139,13 +128,13 @@ class AgentBase:
             self.triggers,
             db_interface=self.db_interface,
             event_stream_manager=self.event_stream_manager,
-            state_manager=AgentBase.get_state_manager(),
+            state_manager=self.state_manager,
         )
 
         InternalActionInterface.initialize(
             self.llm,
             self.task_manager,
-            AgentBase.get_state_manager(),
+            self.state_manager,
             vlm_interface=self.vlm,
         )
 
@@ -192,7 +181,7 @@ class AgentBase:
         try:
             logger.debug("[REACT] starting...")
 
-            AgentBase.get_state_manager().set_agent_property(
+            STATE.set_agent_property(
                 "current_task_id", session_id
             )
 
@@ -205,7 +194,7 @@ class AgentBase:
             # ===================================
             # 1. Start Session
             # ===================================
-            await AgentBase.get_state_manager().start_session(gui_mode)
+            await self.state_manager.start_session(gui_mode)
 
             # ===================================
             # 2. Handle GUI mode
@@ -226,7 +215,7 @@ class AgentBase:
                         display_message="Screen summary updated",
                     )
 
-                AgentBase.get_state_manager().bump_event_stream()
+                self.state_manager.bump_event_stream()
 
             # ===================================
             # 3. Check Limits
@@ -239,7 +228,7 @@ class AgentBase:
             # 4. Select Action
             # ===================================
             logger.debug("[REACT] selecting action")
-            is_running_task: bool = AgentBase.get_state_manager().is_running_task()
+            is_running_task: bool = self.state_manager.is_running_task()
 
             if is_running_task:
                 # Perform reasoning to guide action selection within the task
@@ -279,7 +268,7 @@ class AgentBase:
             
             # Determine parent action
             if not parent_id and is_running_task:
-                current_step = AgentBase.get_state_manager().get_current_step()
+                current_step = self.state_manager.get_current_step()
                 if current_step and current_step.get("action_id"):
                     parent_id = current_step["action_id"]
 
@@ -307,7 +296,7 @@ class AgentBase:
             # ===================================
             new_session_id = action_output.get("task_id") or session_id
 
-            AgentBase.get_state_manager().bump_event_stream()
+            self.state_manager.bump_event_stream()
 
             # Schedule next trigger if continuing a task
             await self._create_new_trigger(new_session_id, action_output, STATE)
@@ -330,7 +319,7 @@ class AgentBase:
 
                     logger.debug("[AGENT BASE] Action failed")
 
-                    AgentBase.get_state_manager().bump_event_stream()
+                    self.state_manager.bump_event_stream()
 
                     logger.debug("[AGENT BASE] Action failed and then bumped")
                     logger.debug(f"[AGENT BASE] Action Output: {action_output}")
@@ -345,7 +334,7 @@ class AgentBase:
         finally:
             # Always end session safely
             try:
-                AgentBase.get_state_manager().clean_state()
+                self.state_manager.clean_state()
             except Exception:
                 logger.warning("[REACT] Failed to end session safely")
 
@@ -353,7 +342,7 @@ class AgentBase:
     # ───────────────────── helpers used by handlers/commands ──────────────
 
     async def _check_agent_limits(self, session_id) -> bool:
-        agent_properties = AgentBase.get_state_manager().get_agent_properties()
+        agent_properties = STATE.get_agent_properties()
         action_count: int = agent_properties.get("action_count", 0)
         max_actions: int = agent_properties.get("max_actions_per_task", 0)
         token_count: int = agent_properties.get("token_count", 0)
@@ -369,7 +358,7 @@ class AgentBase:
                     f"[Warning] Action limit reached: 100% of the maximum ({max_actions} actions) has been used. Aborting task.",
                     display_message=f"Action limit reached: 100% of the maximum ({max_actions} actions) has been used. Aborting task.",
                 )
-                AgentBase.get_state_manager().bump_event_stream()
+                self.state_manager.bump_event_stream()
             return not task_cancelled
         elif (action_count / max_actions) >= 0.8:
             if self.event_stream_manager:
@@ -380,7 +369,7 @@ class AgentBase:
                     "If necessary, mark the task as aborted to prevent premature termination.",
                     display_message=None,
                 )
-                AgentBase.get_state_manager().bump_event_stream()
+                self.state_manager.bump_event_stream()
                 return True
 
         # Check token limits
@@ -393,7 +382,7 @@ class AgentBase:
                     f"[Warning] Token limit reached: 100% of the maximum ({max_tokens} tokens) has been used. Aborting task.",
                     display_message=f"Action limit reached: 100% of the maximum ({max_tokens} tokens) has been used. Aborting task.",
                 )
-                AgentBase.get_state_manager().bump_event_stream()
+                self.state_manager.bump_event_stream()
             return not task_cancelled
         elif (token_count / max_tokens) >= 0.8:
             if self.event_stream_manager:
@@ -404,7 +393,7 @@ class AgentBase:
                     "If necessary, mark the task as aborted to prevent premature termination.",
                     display_message=None,
                 )
-                AgentBase.get_state_manager().bump_event_stream()
+                self.state_manager.bump_event_stream()
                 return True
         
         # No limits close or reached
@@ -467,14 +456,14 @@ class AgentBase:
         Fully wrapped in try/except so errors do not break the main REACT loop.
         """
         try:
-            if not AgentBase.get_state_manager().is_running_task():
+            if not self.state_manager.is_running_task():
                 # Nothing to schedule if no task is running
                 return
 
             # Resolve current step for parent action ID
             parent_action_id = None
             try:
-                current_step = AgentBase.get_state_manager().get_current_step()
+                current_step = self.state_manager.get_current_step()
                 if current_step:
                     parent_action_id = current_step.get("action_id")
             except Exception as e:
@@ -521,9 +510,9 @@ class AgentBase:
             chat_content = user_input
             logger.info(f"[CHAT RECEIVED] {chat_content}")
             gui_mode = payload.get("gui_mode")
-            await AgentBase.get_state_manager().start_session(gui_mode)
+            await self.state_manager.start_session(gui_mode)
 
-            AgentBase.get_state_manager().record_user_message(chat_content)
+            self.state_manager.record_user_message(chat_content)
 
             await self.triggers.put(
                 Trigger(
@@ -580,7 +569,7 @@ class AgentBase:
 
         await self.triggers.clear()
         self.task_manager.reset()
-        AgentBase.get_state_manager().reset()
+        self.state_manager.reset()
         self.event_stream_manager.clear_all()
 
         return "Agent state reset. Starting fresh." 

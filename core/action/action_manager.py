@@ -27,6 +27,7 @@ from core.prompt import RESOLVE_ACTION_INPUT_PROMPT
 from core.event_stream.event_stream_manager import EventStreamManager
 from core.context_engine import ContextEngine
 from core.state.state_manager import StateManager
+from core.state.agent_state import STATE
 
 nest_asyncio.apply()
 
@@ -228,7 +229,7 @@ class ActionManager:
             logger.warning(f"Action {action.name} completed with status: {status}. But no event stream manager to log to.")
         
         logger.debug(f"Persisting final state for action {action.name}...")
-        self.state_manager.set_agent_property("action_count", self.state_manager.get_agent_property("action_count") + 1)
+        STATE.set_agent_property("action_count", STATE.get_agent_property("action_count") + 1)
 
         self._log_action_history(
             run_id=run_id,

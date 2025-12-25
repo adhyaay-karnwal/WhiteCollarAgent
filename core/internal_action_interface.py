@@ -197,13 +197,10 @@ class InternalActionInterface:
     # ─────────────────────── Self-initiative goals ───────────────────────
     @classmethod
     def _get_goal_store(cls) -> Dict[str, Dict[str, Any]]:
-        if cls.state_manager is None:
-            raise RuntimeError("InternalActionInterface not initialized with StateManager.")
-
-        goals = cls.state_manager.get_agent_property("self_initiative_goals") or {}
+        goals = STATE.get_agent_property("self_initiative_goals") or {}
         if not isinstance(goals, dict):
             goals = {}
-        cls.state_manager.set_agent_property("self_initiative_goals", goals)
+        STATE.set_agent_property("self_initiative_goals", goals)
         return goals
 
     @classmethod
@@ -234,7 +231,7 @@ class InternalActionInterface:
                 return {"status": "error", "error": "goal_not_found"}
             goal["deleted_at"] = now
             goal["updated_at"] = now
-            cls.state_manager.set_agent_property("self_initiative_goals", goals)
+            STATE.set_agent_property("self_initiative_goals", goals)
             return {"status": "ok", "goal": goal}
 
         if normalized_op in {"create", "upsert"} and goal_id:
@@ -277,7 +274,7 @@ class InternalActionInterface:
             goal.setdefault("created_at", now)
             goal.setdefault("deleted_at", None)
 
-        cls.state_manager.set_agent_property("self_initiative_goals", goals)
+        STATE.set_agent_property("self_initiative_goals", goals)
         return {"status": "ok", "goal": goal}
 
     @classmethod
@@ -305,5 +302,5 @@ class InternalActionInterface:
         goal.setdefault("created_at", now)
         goal.setdefault("deleted_at", None)
 
-        cls.state_manager.set_agent_property("self_initiative_goals", goals)
+        STATE.set_agent_property("self_initiative_goals", goals)
         return {"status": "ok", "goal": goal}
