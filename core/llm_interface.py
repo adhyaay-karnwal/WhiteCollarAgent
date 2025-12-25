@@ -93,25 +93,13 @@ class LLMInterface:
         logger.info(f"[LLM SEND] system={system_prompt} | user={user_prompt}")
 
         if self.provider == "openai":
-            content = self._generate_openai(system_prompt, user_prompt)
-            response = {
-                "tokens_used": 0,
-                "content": content
-            }
+            response = self._generate_openai(system_prompt, user_prompt)
         elif self.provider == "remote":
-            content = self._generate_ollama(system_prompt, user_prompt)
-            response = {
-                "tokens_used": 0,
-                "content": content
-            }
+            response = self._generate_ollama(system_prompt, user_prompt)
         elif self.provider == "gemini":
             response = self._generate_gemini(system_prompt, user_prompt)
         elif self.provider == "byteplus":
-            content = self._generate_byteplus(system_prompt, user_prompt)
-            response = {
-                "tokens_used": 0,
-                "content": content
-            }
+            response = self._generate_byteplus(system_prompt, user_prompt)
         else:  # pragma: no cover
             raise RuntimeError(f"Unknown provider {self.provider!r}")
 
@@ -211,7 +199,7 @@ class LLMInterface:
             result = response.json()
 
             content = result.get("response", "").strip()
-            total_tokens = response.get("usage", {}).get("total_tokens", 0)
+            total_tokens = result.get("usage", {}).get("total_tokens", 0)
             token_count_input = result.get("prompt_eval_count", 0)
             token_count_output = result.get("eval_count", 0)
             status = "success"
@@ -317,7 +305,7 @@ class LLMInterface:
                     or ""
                 ).strip()
 
-            total_tokens = response.get("usage", {}).get("total_tokens", 0)
+            total_tokens = result.get("usage", {}).get("total_tokens", 0)
 
             # Token usage (prompt/completion/total)
             usage = result.get("usage") or {}
