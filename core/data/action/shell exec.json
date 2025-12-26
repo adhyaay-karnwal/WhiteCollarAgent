@@ -3,6 +3,7 @@
   "name": "shell exec",
   "description": "Executes a shell command using the appropriate OS shell, capturing stdout, stderr, and exit code.",
   "type": "atomic",
+  "execution_mode": "sandboxed",
   "platforms": ["windows", "linux", "darwin"],
   "input_schema": {
     "command": {
