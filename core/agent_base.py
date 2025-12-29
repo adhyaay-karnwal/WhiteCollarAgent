@@ -2,17 +2,14 @@
 """
 core.agent_base
 
-Generic, extensible agent that powers every role-specific AI worker.
+Generic, extensible agent that serves every role-specific AI worker.
 This is a vanilla “base agent”, can be launched by instantiating **AgentBase**
 with default arguments; specialised agents simply subclass and override
 or extend the protected hooks.
 
-White Collar Agent is an open-sorce, light version of AI agent developed by CraftOS.
+White Collar Agent is an open-source, light version of AI agent developed by CraftOS.
 Here are the core features:
-- Planning (Managed in text file)
-- Single thread (multi-tasking not supported)
-- Single tenant (support only one user)
-- Not proactive (cannot initiate task)
+- Planning
 - Can switch between CLI/GUI mode
 - Contain task document for few-shot examples
 
@@ -30,8 +27,9 @@ from __future__ import annotations
 import traceback
 import time
 import uuid
+import json
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Dict
+from typing import Awaitable, Callable, Dict, NamedTuple, Optional
 
 from core.action.action_library import ActionLibrary
 from core.action.action_manager import ActionManager
@@ -43,8 +41,12 @@ from core.vlm_interface import VLMInterface
 from core.database_interface import DatabaseInterface
 from core.logger import logger
 from core.context_engine import ContextEngine
-from core.state_manager import StateManager, StateSession
+from core.state.state_manager import StateManager
+from core.state.agent_state import STATE
+from core.gui.handler import GUIHandler
 from core.trigger import Trigger, TriggerQueue
+from core.prompt import STEP_REASONING_PROMPT
+from core.config import MAX_ACTIONS_PER_TASK
 
 from core.task.task_manager import TaskManager
 from core.task.task_planner import TaskPlanner
@@ -57,6 +59,9 @@ class AgentCommand:
     description: str
     handler: Callable[[], Awaitable[str | None]]
 
+class ReasoningResult(NamedTuple):
+    reasoning: str
+    action_query: str
 
 class AgentBase:
     """
@@ -68,6 +73,7 @@ class AgentBase:
     * `_register_extra_actions`       → register additional tools
     * `_build_db_interface`           → point to another Mongo/Chroma DB
     """
+
     def __init__(
         self,
         *,
@@ -75,6 +81,17 @@ class AgentBase:
         chroma_path: str = "./chroma_db",
         llm_provider: str = "byteplus",
     ) -> None:
+        """
+        This constructor that initializes all agent components.
+
+        Args:
+            data_dir: Filesystem path where persistent agent data (plans,
+                history, etc.) is stored.
+            chroma_path: Directory for the local Chroma vector store used by the
+                RAG components.
+            llm_provider: Provider name passed to :class:`LLMInterface` and
+                :class:`VLMInterface`.
+        """        
         # persistence & memory
         self.db_interface = self._build_db_interface(
             data_dir = data_dir, chroma_path=chroma_path
@@ -83,8 +100,6 @@ class AgentBase:
         # LLM + prompt plumbing
         self.llm = LLMInterface(provider=llm_provider, db_interface=self.db_interface)
         self.vlm = VLMInterface(provider=llm_provider)
-        self.context_engine = ContextEngine()
-        self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
 
         self.event_stream_manager = EventStreamManager(self.llm)
         
@@ -105,9 +120,10 @@ class AgentBase:
 
         # global state
         self.state_manager = StateManager(
-            self.event_stream_manager,
-            vlm_interface=self.vlm,
+            self.event_stream_manager
         )
+        self.context_engine = ContextEngine(state_manager=self.state_manager)
+        self.context_engine.set_role_info_hook(self._generate_role_info_prompt)
 
         self.action_manager = ActionManager(
             self.action_library, self.llm, self.db_interface, self.event_stream_manager, self.context_engine, self.state_manager
@@ -152,7 +168,19 @@ class AgentBase:
         description: str,
         handler: Callable[[], Awaitable[str | None]],
     ) -> None:
-        """Register a command that can be triggered by user input."""
+        """
+        Register an in-band command that users can invoke from chat.
+
+        Commands are simple hooks (e.g. ``/reset``) that map to coroutine
+        handlers. They are surfaced in the UI and routed via
+        :meth:`get_commands`.
+
+        Args:
+            name: Command string the user types; case-insensitive.
+            description: Human-readable description used in help menus.
+            handler: Awaitable callable that performs the command action and
+                returns an optional message to display.
+        """
 
         self._command_registry[name.lower()] = AgentCommand(
             name=name.lower(), description=description, handler=handler
@@ -165,7 +193,17 @@ class AgentBase:
 
     # ─────────────────────────── agent “turn” ────────────────────────────
     async def react(self, trigger: Trigger) -> None:
-        """Execute one agent turn responding to *trigger* in a resilient manner."""
+        """
+        This is the main agent cycle. It executes a full agent turn in response to an incoming trigger.
+
+        The method routes the request through action selection, execution, and
+        follow-up scheduling while logging to the event stream. Errors are
+        captured and recorded without crashing the outer loop.
+
+        Args:
+            trigger: The :class:`Trigger` wakes agent up, and describes when and why the agent
+                should act, including session context and payload.
+        """
         session_id = trigger.session_id
         new_session_id = None
         action_output = {}  # ensure safe reference in error paths
@@ -173,53 +211,77 @@ class AgentBase:
         try:
             logger.debug("[REACT] starting...")
 
-            query = trigger.next_action_description
+            STATE.set_agent_property(
+                "current_task_id", session_id
+            )
+
+            query: str = trigger.next_action_description
+            reasoning: str = ""
+            current_step_index: int | None = None
             gui_mode = trigger.payload.get("gui_mode")
             parent_id = trigger.payload.get("parent_action_id")
 
-            await self.state_manager.start_session(session_id, gui_mode)
+            # ===================================
+            # 1. Start Session
+            # ===================================
+            await self.state_manager.start_session(gui_mode)
 
-            # Compose messages
-            sys_msg, usr_msg = self._compose_prompt(query)
-
-            # Retrieve state session
-            state_session = StateSession.get()
+            # ===================================
+            # 2. Handle GUI mode
+            # ===================================
             logger.debug(f"[GUI MODE FLAG] {gui_mode}")
-            logger.debug(f"[GUI MODE FLAG - state] {state_session.gui_mode}")
+            logger.debug(f"[GUI MODE FLAG - state] {STATE.gui_mode}")
 
             # GUI-mode handling
-            if state_session.gui_mode:
+            if STATE.gui_mode:
                 logger.debug("[GUI MODE] Entered GUI mode.")
-                screen_md = self.state_manager.get_screen_state()
+                png_bytes = GUIHandler.get_screen_state()
+                screen_md = self.vlm.scan_ui_bytes(png_bytes, use_ocr=False)
 
                 if self.event_stream_manager:
                     self.event_stream_manager.log(
-                        session_id,
                         "screen",
                         screen_md,
                         display_message="Screen summary updated",
                     )
 
-                self.state_manager.bump_event_stream(session_id)
+                self.state_manager.bump_event_stream()
 
-            logger.debug(f"[AGENT QUERY] {query}")
+            # ===================================
+            # 3. Check Limits
+            # ===================================
+            should_continue:bool = await self._check_agent_limits()
+            if not should_continue:
+                return
+
+            # ===================================
+            # 4. Select Action
+            # ===================================
             logger.debug("[REACT] selecting action")
-
-            # Decide whether we are in task mode
-            is_running_task = self.state_manager.is_running_task()
+            is_running_task: bool = self.state_manager.is_running_task()
 
             if is_running_task:
+                # Perform reasoning to guide action selection within the task
+                reasoning_result: ReasoningResult = await self._perform_reasoning(query=query)
+                reasoning: str = reasoning_result.reasoning
+                action_query: str = reasoning_result.action_query
+
+                logger.debug(f"[AGENT QUERY] {action_query}")
                 action_decision = await self.action_router.select_action_in_task(
-                    query, context=query
+                    query=action_query, reasoning=reasoning
                 )
             else:
+                logger.debug(f"[AGENT QUERY] {query}")
                 action_decision = await self.action_router.select_action(
-                    query, context=query
+                    query=query
                 )
 
             if not action_decision:
                 raise ValueError("Action router returned no decision.")
 
+            # ===================================
+            # 5. Get Action
+            # ===================================
             action_name = action_decision.get("action_name")
             action_params = action_decision.get("parameters", {})
 
@@ -233,23 +295,23 @@ class AgentBase:
                     f"Action '{action_name}' not found in the library. "
                     "Check DB connectivity or ensure the action is registered."
                 )
-
+            
             # Determine parent action
             if not parent_id and is_running_task:
-                current_step = self.state_manager.get_current_step(session_id)
+                current_step = self.state_manager.get_current_step()
                 if current_step and current_step.get("action_id"):
                     parent_id = current_step["action_id"]
 
             parent_id = parent_id or None  # enforce None at root
 
-            logger.debug(f"[PARENT ACTION ID] {parent_id}")
-
-            # Execute action
+            # ===================================
+            # 6. Execute Action
+            # ===================================
             try:
                 action_output = await self.action_manager.execute_action(
-                    action,
-                    query,
-                    state_session.event_stream,
+                    action=action,
+                    context=reasoning if reasoning else query,
+                    event_stream=STATE.event_stream,
                     parent_id=parent_id,
                     session_id=session_id,
                     is_running_task=is_running_task,
@@ -259,13 +321,15 @@ class AgentBase:
                 logger.error(f"[REACT ERROR] executing action '{action_name}': {e}", exc_info=True)
                 raise
 
-            # Follow-up handling
+            # ===================================
+            # 7. Post-Action Handling
+            # ===================================
             new_session_id = action_output.get("task_id") or session_id
 
-            self.state_manager.bump_event_stream(new_session_id)
+            self.state_manager.bump_event_stream()
 
             # Schedule next trigger if continuing a task
-            await self.create_new_trigger(new_session_id, action_output, state_session)
+            await self._create_new_trigger(new_session_id, action_output, STATE)
 
         except Exception as e:
             # log error without raising again
@@ -278,7 +342,6 @@ class AgentBase:
                     logger.debug("[REACT ERROR] logging to event stream")
 
                     self.event_stream_manager.log(
-                        session_to_use,
                         "error",
                         f"[REACT] {type(e).__name__}: {e}\n{tb}",
                         display_message=None,
@@ -286,14 +349,14 @@ class AgentBase:
 
                     logger.debug("[AGENT BASE] Action failed")
 
-                    self.state_manager.bump_event_stream(session_to_use)
+                    self.state_manager.bump_event_stream()
 
                     logger.debug("[AGENT BASE] Action failed and then bumped")
                     logger.debug(f"[AGENT BASE] Action Output: {action_output}")
 
                     # Schedule fallback follow-up only if action_output exists
                     logger.debug("[AGENT BASE] Failed action so create new trigger")
-                    await self.create_new_trigger(session_to_use, action_output, state_session)
+                    await self._create_new_trigger(session_to_use, action_output, STATE)
 
             except Exception:
                 logger.error("[REACT ERROR] Failed to log to event stream or create trigger", exc_info=True)
@@ -301,17 +364,136 @@ class AgentBase:
         finally:
             # Always end session safely
             try:
-                self.state_manager.end_session()
+                self.state_manager.clean_state()
             except Exception:
                 logger.warning("[REACT] Failed to end session safely")
 
 
     # ───────────────────── helpers used by handlers/commands ──────────────
 
-    async def create_new_trigger(self, new_session_id, action_output, state_session):
+    async def _check_agent_limits(self) -> bool:
+        agent_properties = STATE.get_agent_properties()
+        action_count: int = agent_properties.get("action_count", 0)
+        max_actions: int = agent_properties.get("max_actions_per_task", 0)
+        token_count: int = agent_properties.get("token_count", 0)
+        max_tokens: int = agent_properties.get("max_tokens_per_task", 0)
+
+        # Check action limits
+        if (action_count / max_actions) >= 1.0:
+            response = await self.task_manager.mark_task_cancel(reason=f"Task reached the maximum actions allowed limit: {max_actions}")
+            task_cancelled: bool = response
+            if self.event_stream_manager and task_cancelled:
+                self.event_stream_manager.log(
+                    "warning",
+                    f"Action limit reached: 100% of the maximum actions ({max_actions} actions) has been used. Aborting task.",
+                    display_message=f"Action limit reached: 100% of the maximum ({max_actions} actions) has been used. Aborting task.",
+                )
+                self.state_manager.bump_event_stream()
+            return not task_cancelled
+        elif (action_count / max_actions) >= 0.8:
+            if self.event_stream_manager:
+                self.event_stream_manager.log(
+                    "warning",
+                    f"Action limit nearing: 80% of the maximum actions ({max_actions} actions) has been used. "
+                    "Consider wrapping up the task or informing the user that the task may be too complex. "
+                    "If necessary, mark the task as aborted to prevent premature termination.",
+                    display_message=None,
+                )
+                self.state_manager.bump_event_stream()
+                return True
+
+        # Check token limits
+        if (token_count / max_tokens) >= 1.0:
+            response = await self.task_manager.mark_task_cancel(reason=f"Task reached the maximum tokens allowed limit: {max_tokens}")
+            task_cancelled: bool = response
+            if self.event_stream_manager and task_cancelled:
+                self.event_stream_manager.log(
+                    "warning",
+                    f"Token limit reached: 100% of the maximum tokens ({max_tokens} tokens) has been used. Aborting task.",
+                    display_message=f"Action limit reached: 100% of the maximum ({max_tokens} tokens) has been used. Aborting task.",
+                )
+                self.state_manager.bump_event_stream()
+            return not task_cancelled
+        elif (token_count / max_tokens) >= 0.8:
+            if self.event_stream_manager:
+                self.event_stream_manager.log(
+                    "warning",
+                    f"Token limit nearing: 80% of the maximum tokens ({max_tokens} tokens) has been used. "
+                    "Consider wrapping up the task or informing the user that the task may be too complex. "
+                    "If necessary, mark the task as aborted to prevent premature termination.",
+                    display_message=None,
+                )
+                self.state_manager.bump_event_stream()
+                return True
+        
+        # No limits close or reached
+        return True
+
+    async def _perform_reasoning(self, query: str, retries: int = 2) -> ReasoningResult:
         """
-        Schedule the next trigger if a task is running.
-        Fully wrapped in try/except so errors do not break the main REACT loop.
+        Perform LLM-based reasoning on a user query to guide action selection.
+
+        This function calls an asynchronous LLM API, validates its structured JSON
+        response, and retries if the output is malformed.
+
+        Args:
+            query (str): The raw user query from the user.
+            retries (int): Number of retry attempts if the LLM returns invalid JSON.
+
+        Returns:
+            ReasoningResult: A validated reasoning result containing:
+                - reasoning: The model's reasoning output
+                - action_query: A refined query used for action selection
+        """
+
+        # Build the system prompt using the current context configuration
+        system_prompt, _ = self.context_engine.make_prompt(
+            user_flags={"query": False, "expected_output": False},
+            system_flags={"policy": False},
+        )
+
+        # Format the user prompt with the incoming query
+        prompt = STEP_REASONING_PROMPT.format(user_query=query)
+
+        # Track the last parsing/validation error for meaningful failure reporting
+        last_error: Exception | None = None
+
+        # Attempt the LLM call and parsing up to (retries + 1) times
+        for attempt in range(retries + 1):
+            # Await the asynchronous LLM call (non-blocking)
+            response = await self.llm.generate_response_async(
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+            )
+
+            # Log raw LLM output for debugging and observability
+            print(f"[REASONING attempt={attempt}] {response}")
+
+            try:
+                # Parse and validate the structured JSON response
+                return self._parse_reasoning_response(response)
+
+            except ValueError as e:
+                # Capture the error and retry if attempts remain
+                last_error = e
+
+        # All retries exhausted — fail fast with a clear error
+        raise RuntimeError("Failed to obtain valid reasoning from LLM") from last_error
+
+    async def _create_new_trigger(self, new_session_id, action_output, STATE):
+        """
+        Schedule a follow-up trigger when a task is ongoing.
+
+        This helper inspects the current task state and enqueues a new trigger
+        so the agent can continue multi-step executions. It is defensive by
+        design so failures do not interrupt the main ``react`` loop.
+
+        Args:
+            new_session_id: Session identifier to continue.
+            action_output: Result dictionary returned by the previous action
+                execution; may contain timing metadata.
+            state_session: The current :class:`StateSession` object, used to
+                propagate session context and payload.
         """
         try:
             if not self.state_manager.is_running_task():
@@ -321,7 +503,7 @@ class AgentBase:
             # Resolve current step for parent action ID
             parent_action_id = None
             try:
-                current_step = self.state_manager.get_current_step(new_session_id)
+                current_step = self.state_manager.get_current_step()
                 if current_step:
                     parent_action_id = current_step.get("action_id")
             except Exception as e:
@@ -348,7 +530,7 @@ class AgentBase:
                         session_id=new_session_id,
                         payload={
                             "parent_action_id": parent_action_id,
-                            "gui_mode": state_session.gui_mode,
+                            "gui_mode": STATE.gui_mode,
                         },
                     )
                 )
@@ -368,7 +550,7 @@ class AgentBase:
             chat_content = user_input
             logger.info(f"[CHAT RECEIVED] {chat_content}")
             gui_mode = payload.get("gui_mode")
-            await self.state_manager.start_session("", gui_mode)
+            await self.state_manager.start_session(gui_mode)
 
             self.state_manager.record_user_message(chat_content)
 
@@ -422,18 +604,16 @@ class AgentBase:
 
     # ────────────────────────── internals ────────────────────────────────
 
-    def _compose_prompt(self, user_query: str):
-        """
-        Helper that merges *extra_system_prompt* (if any) with the normal
-        prompt created by ContextEngine.
-        """
-        sys_msg, usr_msg = self.context_engine.make_prompt(user_query)
-        if self._extra_system_prompt:
-            sys_msg = f"{self._extra_system_prompt.strip()}\n\n{sys_msg}"
-        return sys_msg, usr_msg
-
     async def reset_agent_state(self) -> str:
-        """Reset runtime state so the agent behaves like a fresh instance."""
+        """
+        Reset runtime state so the agent behaves like a fresh instance.
+
+        Clears triggers, resets task and state managers, and purges event
+        streams. Useful for debugging or user-initiated resets.
+
+        Returns:
+            Confirmation message summarizing the reset.
+        """
 
         await self.triggers.clear()
         self.task_manager.reset()
@@ -442,9 +622,40 @@ class AgentBase:
 
         return "Agent state reset. Starting fresh." 
 
+    def _parse_reasoning_response(self, response: str) -> ReasoningResult:
+        """
+        Parse and validate the structured JSON response from the reasoning LLM call.
+        """
+        try:
+            parsed = json.loads(response)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"LLM returned invalid JSON: {response}") from e
+
+        if not isinstance(parsed, dict):
+            raise ValueError(f"LLM response is not a JSON object: {parsed}")
+
+        reasoning = parsed.get("reasoning")
+        action_query = parsed.get("action_query")
+
+        if not isinstance(reasoning, str) or not isinstance(action_query, str):
+            raise ValueError(f"Invalid reasoning schema: {parsed}")
+
+        return ReasoningResult(
+            reasoning=reasoning,
+            action_query=action_query,
+        )
+
     # ─────────────────────────── lifecycle ──────────────────────────────
     async def run(self, *, provider: str | None = None, api_key: str = "") -> None:
-        """Launch the interactive CLI loop."""
+        """
+        Launch the interactive TUI loop for the agent.
+
+        Args:
+            provider: Optional provider override passed to the TUI before chat
+                starts; defaults to the provider configured during
+                initialization.
+            api_key: Optional API key presented in the TUI for convenience.
+        """
 
         # Allow the TUI to present provider/api-key configuration before chat starts.
         cli = TUIInterface(

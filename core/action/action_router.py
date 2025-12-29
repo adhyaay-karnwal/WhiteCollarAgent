@@ -45,6 +45,14 @@ class ActionRouter:
     """
 
     def __init__(self, action_library: ActionLibrary, llm_interface, context_engine: ContextEngine):
+        """
+        Initialize the router responsible for selecting or creating actions.
+
+        Args:
+            action_library: Repository for storing and retrieving action definitions.
+            llm_interface: LLM client used to reason about which action to run.
+            context_engine: Provider of system prompts and context formatting.
+        """
         self.action_library = action_library
         self.llm_interface = llm_interface
         self.context_engine = context_engine
@@ -53,8 +61,6 @@ class ActionRouter:
         self,
         query: str,
         action_type: Optional[str] = None,
-        *,
-        context: str = "",
     ) -> Dict[str, Any]:
         """
         default action selection function when not in a task
@@ -65,6 +71,15 @@ class ActionRouter:
         3. Asks the LLM if any candidate is valid, or if a new action is needed.
         4. If new action is needed, create & store it, then return it.
         5. Otherwise, return the chosen existing action with its parameters.
+
+        Args:
+            query: User's request that should be satisfied by an action.
+            action_type: Optional type filter forwarded to the LLM.
+            context: Additional conversational context to ground the prompt.
+
+        Returns:
+            Dict[str, Any]: Parsed decision containing ``action_name`` and
+            ``parameters`` ready for execution or creation.
         """
         conversation_mode_actions = ["send message", "ask question", "create and start task", "ignore"]
         action_candidates = []
@@ -84,7 +99,6 @@ class ActionRouter:
         prompt = SELECT_ACTION_PROMPT.format(
             query=query,
             action_candidates=self._format_candidates(action_candidates),
-            context=self._format_context(context),
         )
 
         decision = await self._prompt_for_decision(prompt)
@@ -101,8 +115,7 @@ class ActionRouter:
         query: str,
         action_type: Optional[str] = None,
         GUI_mode=False,
-        *,
-        context: str = "",
+        reasoning: str = "",
     ) -> Dict[str, Any]:
         """
         When a task is running, this action selection will be used.
@@ -113,6 +126,18 @@ class ActionRouter:
         4. If new action is needed, return an empty action name, and let the outer
            loop create the action.
         5. Otherwise, return the chosen existing action along with parameters.
+        
+        Args:
+            query: Task-level instruction for the next step.
+            action_type: Optional action type hint supplied to the LLM.
+            GUI_mode: Whether the user is interacting through a GUI, affecting
+                which actions are visible.
+            context: Serialized task context to embed in the prompt.
+
+        Returns:
+            Dict[str, Any]: Decision payload with ``action_name`` and
+            normalized ``parameters`` for execution, or an empty ``action_name``
+            when a new action should be created.
         """
         action_candidates = []
         action_name_candidates = []
@@ -137,7 +162,8 @@ class ActionRouter:
             })
     
         # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=100)
+        candidate_names = self.action_library.search_action(query, top_k=5)
+        logger.info(f"ActionRouter found candidate actions: {candidate_names}")
         for name in candidate_names:
             act = self.action_library.retrieve_action(name)
             if not act:
@@ -160,7 +186,7 @@ class ActionRouter:
         # Build the instruction prompt for the LLM
         prompt = SELECT_ACTION_IN_TASK_PROMPT.format(
             query=query,
-            context=self._format_context(context),
+            reasoning=self._format_reasoning(reasoning),
             action_candidates=self._format_candidates(action_candidates),
             action_name_candidates=self._format_action_names(action_name_candidates),
         )
@@ -196,6 +222,7 @@ class ActionRouter:
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
+                system_flags={"agent_info": False, "role_info": False, "conversation_history": False, "event_stream": False, "task_state": False, "policy": False},
             )
             raw_response = await self.llm_interface.generate_response_async(system_prompt, current_prompt)
             decision, parse_error = self._parse_action_decision(raw_response)
@@ -257,13 +284,13 @@ class ActionRouter:
 
         simplified: List[Dict[str, Any]] = []
         for candidate in candidates:
-            input_schema = candidate.get("input_schema") or {}
-            if isinstance(input_schema, dict):
-                input_fields = list(input_schema.keys())
-            elif isinstance(input_schema, list):
-                input_fields = list(input_schema)
-            else:
-                input_fields = []
+            # input_schema = candidate.get("input_schema") or {}
+            # if isinstance(input_schema, dict):
+            #     input_fields = list(input_schema.keys())
+            # elif isinstance(input_schema, list):
+            #     input_fields = list(input_schema)
+            # else:
+            #     input_fields = []
 
             output_schema = candidate.get("output_schema") or {}
             if isinstance(output_schema, dict):
@@ -275,10 +302,10 @@ class ActionRouter:
 
             simplified.append(
                 {
-                    "name": candidate.get("name", ""),
-                    "description": candidate.get("description", ""),
-                    "input_schema": input_fields,
-                    "output_schema": output_fields,
+                    "name": candidate.get("name"),
+                    "description": candidate.get("description"),
+                    "input_schema": candidate.get("input_schema"),
+                    "output_schema": output_fields
                 }
             )
 
@@ -289,7 +316,7 @@ class ActionRouter:
             return "[]"
         return json.dumps(names, indent=2, ensure_ascii=False)
 
-    def _format_context(self, context: str | list | dict | None) -> str:
+    def _format_reasoning(self, context: str | list | dict | None) -> str:
         if context is None:
             return ""
         if isinstance(context, (list, dict)):

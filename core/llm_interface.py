@@ -12,14 +12,15 @@ import asyncio
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
-
 import requests
-
+from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
+from core.models.factory import ModelFactory
+from core.models.types import InterfaceType
 from core.google_gemini_client import GeminiAPIError, GeminiClient
+from core.state.agent_state import STATE
 from decorators import profiler, profile, log_events
 
 # Logging setup — fall back to a basic logger if the project‑level logger
@@ -51,81 +52,33 @@ class LLMInterface:
         model: Optional[str] = None,
         db_interface: Optional[Any] = None,
         temperature: float = 0.0,
-        max_tokens: int = 8000,
-        ollama_url: str = "http://localhost:11434/api/generate",
+        max_tokens: int = 8000
     ) -> None:
-        """Create a new :class:`LLMInterface`.
-
-        Parameters
-        ----------
-        provider:
-            ``"openai"``, ``"remote"`` or ``"gemini"``. Overrides DB-stored value.
-        model:
-            Model identifier for the selected provider (e.g. ``"gpt-4o"`` or
-            ``"gemini-pro"``). Overrides DB-stored value.
-        temperature:
-            Sampling temperature.
-        max_tokens:
-            Maximum tokens in the completion (only honoured by OpenAI and Gemini).
-        db_interface:
-            Optional persistence layer implementing ``log_prompt``.
-        ollama_url:
-            Base URL for the Ollama HTTP API.
-        """
         self.db_interface = db_interface
-        self.ollama_url   = ollama_url.rstrip("/") + "/api/generate" if "/api/" not in ollama_url else ollama_url
-        self.temperature  = temperature
-        self.max_tokens   = max_tokens
+        self.temperature = temperature
+        self.max_tokens = max_tokens
         self._gemini_client: GeminiClient | None = None
-        
+
         INFO_KEY = "singleton"
-        self._info_key = INFO_KEY
         info = (db_interface.get_agent_info(INFO_KEY) if db_interface else {}) or {}
-        
-        # Prioritize direct arguments, then DB info.
-        self.provider = provider 
-        # 'gemini' #provider or info.get("provider")
-        
-        # Set a sensible default model based on the provider
-        default_model = "gemini-2.5-flash"
-        if self.provider == "gemini":
-            default_model = "gemini-2.5-flash"
-        elif self.provider == "remote":
-            default_model = "llama3"
-        elif self.provider == "byteplus":
-            default_model = "kimi-k2-250711"
-            
-        self.model = model or info.get("model", default_model)
 
-        if self.provider == "openai":
-            self.api_key = os.getenv("OPENAI_API_KEY")
-            if not self.api_key or not self.api_key.strip():
-                raise EnvironmentError("OPENAI_API_KEY environment variable is not set.")
-            self.client = OpenAI(api_key=self.api_key)
+        resolved_provider = provider or info.get("provider", "gemini")
 
-        elif self.provider == "remote":
-            # No additional initialisation required for Ollama.
-            pass
+        ctx = ModelFactory.create(
+            provider=resolved_provider,
+            interface=InterfaceType.LLM,
+            model_override=model or info.get("model"),
+        )
 
-        elif self.provider == "gemini":
-            self.api_key = os.getenv("GOOGLE_API_KEY")
-            if not self.api_key or not self.api_key.strip():
-                raise EnvironmentError("GOOGLE_API_KEY environment variable is not set.")
-            self._gemini_client = GeminiClient(self.api_key)
-        elif self.provider == "byteplus":
-            # BytePlus ModelArk API (OpenAI-compatible protocol)
-            # https://ark.ap-southeast.bytepluses.com/api/v3
-            self.api_key = os.getenv("BYTEPLUS_API_KEY")  # optional fallback name
-            
-            if not self.api_key or not self.api_key.strip():
-                raise EnvironmentError("BYTEPLUS_API_KEY is not set.")
-            # Allow override; default is AP Southeast per docs.
-            self.byteplus_base_url = os.getenv(
-                "BYTEPLUS_BASE_URL",
-                "https://ark.ap-southeast.bytepluses.com/api/v3"
-            )
-        else:
-            raise ValueError("Unsupported provider. Use 'openai', 'remote', or 'gemini'.")
+        self.provider = ctx["provider"]
+        self.model = ctx["model"]
+        self.client = ctx["client"]
+        self._gemini_client = ctx["gemini_client"]
+        self.remote_url = ctx["remote_url"]
+
+        if ctx["byteplus"]:
+            self.api_key = ctx["byteplus"]["api_key"]
+            self.byteplus_base_url = ctx["byteplus"]["base_url"]
 
     # ───────────────────────────  Public helpers  ────────────────────────────
     def _generate_response_sync(
@@ -140,17 +93,19 @@ class LLMInterface:
         logger.info(f"[LLM SEND] system={system_prompt} | user={user_prompt}")
 
         if self.provider == "openai":
-            content = self._generate_openai(system_prompt, user_prompt)
+            response = self._generate_openai(system_prompt, user_prompt)
         elif self.provider == "remote":
-            content = self._generate_ollama(system_prompt, user_prompt)
+            response = self._generate_ollama(system_prompt, user_prompt)
         elif self.provider == "gemini":
-            content = self._generate_gemini(system_prompt, user_prompt)
+            response = self._generate_gemini(system_prompt, user_prompt)
         elif self.provider == "byteplus":
-            content = self._generate_byteplus(system_prompt, user_prompt)
+            response = self._generate_byteplus(system_prompt, user_prompt)
         else:  # pragma: no cover
             raise RuntimeError(f"Unknown provider {self.provider!r}")
 
-        cleaned = re.sub(self._CODE_BLOCK_RE, "", (content or "").strip())
+        cleaned = re.sub(self._CODE_BLOCK_RE, "", response.get("content", "").strip())
+
+        STATE.set_agent_property("token_count", STATE.get_agent_property("token_count", 0) + response.get("tokens_used", 0))
         logger.info(f"[LLM RECV] {cleaned}")
         return cleaned
 
@@ -205,6 +160,8 @@ class LLMInterface:
             exc_obj = exc
             logger.error(f"Error calling OpenAI API: {exc}")
 
+        total_tokens = token_count_input + token_count_output
+
         self._log_to_db(
             system_prompt,
             user_prompt,
@@ -213,7 +170,10 @@ class LLMInterface:
             token_count_input,
             token_count_output,
         )
-        return content or ""
+        return {
+            "tokens_used": total_tokens or 0,
+            "content": content or ""
+        }
 
     @log_events(name="_generate_ollama")
     @profile("llm_ollama_call")
@@ -233,11 +193,13 @@ class LLMInterface:
                     "temperature": self.temperature,
                 }
             }
-            response = requests.post(self.ollama_url, json=payload, timeout=120)
+            url: str = f"{self.remote_url.rstrip('/')}/generate"
+            response = requests.post(url, json=payload, timeout=120)
             response.raise_for_status()
             result = response.json()
 
             content = result.get("response", "").strip()
+            total_tokens = result.get("usage", {}).get("total_tokens", 0)
             token_count_input = result.get("prompt_eval_count", 0)
             token_count_output = result.get("eval_count", 0)
             status = "success"
@@ -253,7 +215,10 @@ class LLMInterface:
             token_count_input,
             token_count_output,
         )
-        return content or ""
+        return {
+            "tokens_used": total_tokens or 0,
+            "content": content or ""
+        }
 
     @log_events(name="_generate_gemini")
     @profile("llm_gemini_call")
@@ -290,7 +255,10 @@ class LLMInterface:
             token_count_input,
             token_count_output,
         )
-        return content or ""
+        return content or {
+            "tokens_used": 0,
+            "content": ""
+        }
 
     @log_events(name="_generate_byteplus")
     @profile("llm_byteplus_call")
@@ -325,6 +293,8 @@ class LLMInterface:
             response.raise_for_status()
             result = response.json()
 
+            logger.info(f"BUTTPLUG RESPONSE: {result}")
+
             # Non-streaming content location (OpenAI-compatible)
             choices = result.get("choices", [])
             if choices:
@@ -334,6 +304,8 @@ class LLMInterface:
                     or choices[0].get("delta", {}).get("content", "")
                     or ""
                 ).strip()
+
+            total_tokens = result.get("usage", {}).get("total_tokens", 0)
 
             # Token usage (prompt/completion/total)
             usage = result.get("usage") or {}
@@ -353,7 +325,10 @@ class LLMInterface:
             token_count_input,
             token_count_output,
         )
-        return content or ""
+        return {
+            "tokens_used": total_tokens or 0,
+            "content": content or ""
+        }
 
     # ─────────────────── Internal utilities ───────────────────
     @log_events(name="_log_to_db")
