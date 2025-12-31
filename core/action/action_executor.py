@@ -7,11 +7,8 @@ import venv
 import uuid
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
-from typing import Any, Dict
-
-# Assuming Action is defined elsewhere or imported
-# from core.action.action import Action 
-# from core.logger import logger
+from typing import Any
+from core.logger import logger
 
 # ============================================
 # Global process pool (shared safely)
@@ -53,10 +50,40 @@ def _atomic_action_venv_process(
             action_file.write_text(
                 f"""
 import json
+import sys
+
 input_data = json.loads({json.dumps(json.dumps(input_data))})
 
 # ─── USER CODE ───
 {action_code}
+
+# ─── Find and call the function ───
+func = None
+local_vars = dict(locals())
+for name, obj in local_vars.items():
+    if callable(obj) and not name.startswith('_') and name not in ('input_data', 'json', 'sys'):
+        func = obj
+        break
+
+if func is None:
+    # Fallback: check if output variable was set (legacy behavior)
+    if 'output' in local_vars:
+        print(local_vars['output'])
+        sys.exit(0)
+    else:
+        sys.exit(1)
+
+# Call the function and print result as JSON
+try:
+    result = func(input_data)
+    if isinstance(result, dict):
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print(str(result))
+except Exception as e:
+    import traceback
+    print("Execution failed: " + str(e) + "\\n" + traceback.format_exc(), file=sys.stderr)
+    sys.exit(1)
 """,
                 encoding="utf-8",
             )
@@ -87,17 +114,48 @@ def _atomic_action_internal(
     Executes an internal action in-process.
     """
     try:
+        import json
         local_ns = {
             "input_data": input_data,
             "json": json,
             "asyncio": asyncio,
         }
 
+        # Execute the function definition
         exec(action_code, local_ns, local_ns)
-
-        # Internal actions store their JSON result in a variable named 'output'
+        
+        # Find the function that was defined (it should be the only callable in local_ns)
+        func = None
+        for name, obj in local_ns.items():
+            if callable(obj) and not name.startswith('_') and name != 'input_data':
+                func = obj
+                break
+        
+        if func is None:
+            # Fallback: check if output variable was set (legacy behavior)
+            if "output" in local_ns:
+                return {
+                    "stdout": local_ns.get("output", ""),
+                    "stderr": "",
+                    "returncode": 0,
+                }
+            return {
+                "stdout": "",
+                "stderr": "Internal execution failed: No function found in action code",
+                "returncode": -1,
+            }
+        
+        # Call the function and capture its return value
+        result = func(input_data)
+        
+        # Convert result to JSON string for stdout
+        if isinstance(result, dict):
+            output_str = json.dumps(result, ensure_ascii=False)
+        else:
+            output_str = str(result)
+        
         return {
-            "stdout": local_ns.get("output", ""),
+            "stdout": output_str,
             "stderr": "",
             "returncode": 0,
         }
@@ -125,6 +183,7 @@ class ActionExecutor:
         timeout: int = 1800,
     ) -> dict:
         execution_mode = getattr(action, "execution_mode", "sandboxed")
+        logger.debug(f"[EXECTION CODE] {action.code}")
 
         if execution_mode == "internal":
             result = _atomic_action_internal(action.code, input_data)

@@ -92,6 +92,7 @@ class AgentBase:
             llm_provider: Provider name passed to :class:`LLMInterface` and
                 :class:`VLMInterface`.
         """        
+        
         # persistence & memory
         self.db_interface = self._build_db_interface(
             data_dir = data_dir, chroma_path=chroma_path
@@ -106,7 +107,6 @@ class AgentBase:
         # action & task layers
         self.action_library = ActionLibrary(self.llm, db_interface=self.db_interface)
         self.action_library.sync_databases()  # base tools
-        self._register_extra_actions()        # role-specific tools
         
         self.task_docs_path = "core/data/task_document"
         if self.task_docs_path:
@@ -578,16 +578,6 @@ class AgentBase:
         fragment that is **prepended** to the standard one.
         """
         return ""
-
-    def _register_extra_actions(self) -> None:
-        """
-        Sub-classes override to register additional Action objects,
-        e.g.::
-
-            from .actions import email_campaign
-            self.action_library.register_module(email_campaign)
-        """
-        return
     
     def _generate_role_info_prompt(self) -> str:
         """

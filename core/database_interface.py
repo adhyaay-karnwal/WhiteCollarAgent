@@ -20,6 +20,9 @@ import chromadb
 from core.logger import logger
 from core.task.task import Task
 
+from core.action.action_framework.registry import registry_instance
+from core.action.action_framework.loader import load_actions_from_directories
+
 
 class DatabaseInterface:
     """All persistence operations for the agent live here."""
@@ -72,6 +75,19 @@ class DatabaseInterface:
 
         # Ensure Chroma stays in sync with the filesystem sources on startup
         self.sync_actions_to_chroma()
+
+        # Retrieve everything currently in the collection
+        stored_data = self.chroma_actions.get()
+        stored_ids = stored_data.get("ids", [])
+        count = len(stored_ids)
+        
+        if count > 0:
+            # Create a readable comma-separated string of action names
+            actions_list_str = ", ".join(sorted(stored_ids))
+            logger.info(f"✅ ChromaDB sync successful. Collection now holds {count} actions: [{actions_list_str}]")
+        else:
+                logger.warning("⚠️ ChromaDB sync completed, but the collection is empty.")
+
         self.sync_task_documents_to_chroma()
 
     # ------------------------------------------------------------------
@@ -350,17 +366,12 @@ class DatabaseInterface:
         Returns:
             List of action dictionaries stored on disk that satisfy the filter.
         """
+        actions = registry_instance.list_all_actions_as_json()
 
-        actions = self._load_actions_from_disk()
-        filtered: List[Dict[str, Any]] = []
+        if default is not None:
+            actions = [action for action in actions if action.get("default") == default]
 
-        for action in actions:
-            if default is not None and bool(action.get("default")) != default:
-                continue
-
-            filtered.append(action)
-
-        return filtered
+        return actions
 
     def get_action(self, name: str) -> Optional[Dict[str, Any]]:
         """
@@ -373,10 +384,13 @@ class DatabaseInterface:
             The action dictionary when found, otherwise ``None``.
         """
         needle = name.lower()
-        for action in self._load_actions_from_disk():
-            if action.get("name", "").lower() == needle:
-                return action
-        return None
+        action = registry_instance.find_action_by_name(action_name=name)
+        
+        # if action is None:
+        #     for action in self._load_actions_from_disk():
+        #         if action.get("name", "").lower() == needle:
+        #             return action
+        return action
 
     def delete_action(self, name: str) -> None:
         """
@@ -419,7 +433,10 @@ class DatabaseInterface:
         Returns:
             Number of action definitions indexed in Chroma.
         """        
-        actions = self._load_actions_from_disk()
+        load_actions_from_directories()
+
+        actions: List[Dict[str, Any]] = registry_instance.list_all_actions_as_json()
+
         try:
             existing = self.chroma_actions.get()
             ids = existing.get("ids", []) if existing else []
