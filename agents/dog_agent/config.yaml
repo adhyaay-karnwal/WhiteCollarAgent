@@ -1,4 +1,4 @@
-data_dir: agents/dog_agent/agent/data/action
+data_dir: agents/dog_agent/data/
 rag_dir: rag_docs
 rag_namespace: dog_agent_knowledge
 

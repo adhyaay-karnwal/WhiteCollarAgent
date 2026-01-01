@@ -87,7 +87,7 @@ def sit(input_data: dict) -> dict:
 from core.action.action_framework.registry import action
 
 @action(
-    name="wiggle_tail",
+    name="wiggle tail",
     description="Display an ASCII image of a dog sitting and wiggling its tail.",
     execution_mode="internal",
     input_schema={},  # no inputs

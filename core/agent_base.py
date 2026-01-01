@@ -106,7 +106,6 @@ class AgentBase:
         
         # action & task layers
         self.action_library = ActionLibrary(self.llm, db_interface=self.db_interface)
-        self.action_library.sync_databases()  # base tools
         
         self.task_docs_path = "core/data/task_document"
         if self.task_docs_path:
