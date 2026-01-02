@@ -83,11 +83,17 @@ class ContextEngine:
                 token_count=agent_properties.get("token_count", 0),
                 max_tokens_per_task=agent_properties.get("max_tokens_per_task"),
             )
+            # Add GUI mode status
+            gui_mode_status = "GUI mode" if STATE.gui_mode else "CLI mode"
             return (
                 "\nThe current agent state is as follows:"
                 f"\n{prompt}"
+                f"\n- Current Mode: {gui_mode_status}"
             )
-        return ""
+        else:
+            # Even if no task, show mode
+            gui_mode_status = "GUI mode" if STATE.gui_mode else "CLI mode"
+            return f"\nThe current agent state:\n- Current Mode: {gui_mode_status}"
 
     def create_system_conversation_history(self):
         """Return formatted conversation history for the current session."""
@@ -134,6 +140,7 @@ class ContextEngine:
         """
         Create a system message block with environmental & temporal context
         """
+        import platform
         local_timezone = get_localzone()
         now = datetime.now(local_timezone)
         current_time = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace("+00:00","Z")
@@ -141,7 +148,10 @@ class ContextEngine:
             current_time=current_time, 
             timezone=now.strftime('%Z'),
             user_location=local_timezone, # TODO Not accurate! 
-            working_directory=AGENT_WORKSPACE_ROOT
+            working_directory=AGENT_WORKSPACE_ROOT,
+            operating_system=platform.system(),
+            os_version=platform.release(),
+            os_platform=platform.platform()
             )
         return prompt
     

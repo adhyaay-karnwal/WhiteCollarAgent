@@ -484,6 +484,7 @@ ENVIRONMENTAL_CONTEXT_PROMPT = """
 <agent_environment>
 - Current Time: {current_time} ({timezone})
 - User Location: {user_location}
+- Operating System: {operating_system} {os_version} ({os_platform})
 - Your sandbox and working directory, please save and access your files and folder here: {working_directory}. All files MUST be saved INSIDE the working directory, not outside.
 </agent_environment>
 """

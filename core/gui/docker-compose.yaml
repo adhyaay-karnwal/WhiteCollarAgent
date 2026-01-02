@@ -1,0 +1,23 @@
+services:
+  # This single container replaces the entire agent/turn stack
+  desktop:
+    image: lscr.io/linuxserver/webtop:ubuntu-xfce
+    container_name: simple-agent-desktop
+    security_opt:
+      - seccomp:unconfined # Helps with chromium/browser stability inside
+    environment:
+      - PUID=1000 # Run as a standard user internally
+      - PGID=1000
+      - TZ=Etc/UTC
+      # Set the username/password for the web login
+      - CUSTOM_USER=agent
+      - PASSWORD=password
+    volumes:
+      # Map a local folder to the container's home directory so settings persist
+      - ./config:/config
+    ports:
+      # THE ONLY PORT YOU NEED. Standard TCP HTTP.
+      - 3000:3000
+    # Set shared memory size to prevent browser crashes
+    shm_size: "2gb"
+    restart: unless-stopped
