@@ -234,19 +234,12 @@ class AgentBase:
             # GUI-mode handling
             if STATE.gui_mode:
                 logger.debug("[GUI MODE] Entered GUI mode.")
-                png_bytes = GUIHandler.get_screen_state()
+                png_bytes = GUIHandler.get_screen_state(GUIHandler.TARGET_CONTAINER)
                 
                 if png_bytes is None:
-                    error_detail = GUIHandler.get_last_error()
-                    if error_detail:
-                        logger.warning(f"[GUI MODE] Failed to capture screen state: {error_detail}")
-                        screen_md = f"# UI Elements (0)\nScreen capture failed: {error_detail}\n\nGUI actions may not work correctly without display access."
-                    else:
-                        logger.warning("[GUI MODE] Failed to capture screen state. Screen capture may not be available (e.g., running in Docker without display access).")
-                        screen_md = "# UI Elements (0)\nScreen capture failed. GUI actions may not work correctly without display access."
+                    logger.warning("[GUI MODE] Failed to capture screen state")
+                    screen_md = "# UI Elements (0)\nScreen capture failed. GUI actions may not work correctly without display access."
                 else:
-                    # Clear error on success
-                    GUIHandler._last_error = None
                     screen_md = self.vlm.scan_ui_bytes(png_bytes, use_ocr=False)
 
                 if self.event_stream_manager:

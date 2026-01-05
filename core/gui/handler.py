@@ -1,6 +1,7 @@
 import subprocess
 import sys
 from typing import Optional, Tuple
+from core.logger import logger
 
 class GUIHandler:
     """
@@ -76,10 +77,10 @@ try {
         Injects an agent script into the specified Docker container to take
         a screenshot and streams the raw PNG bytes back.
         """
-        print(f"[GUIHandler] Initiating screen capture for '{container_id}'...")
+        logger.debug(f"[GUIHandler] Initiating screen capture for '{container_id}'...")
 
         os_type = cls._detect_os(container_id)
-        print(f"[GUIHandler] Detected OS: {os_type.upper()}")
+        logger.debug(f"[GUIHandler] Detected OS: {os_type.upper()}")
 
         if os_type == "linux":
             return cls._get_linux_screen_with_auto_install(container_id)
@@ -97,7 +98,7 @@ try {
         """Handles the Linux capture lifecycle, including auto-installing dependencies."""
         
         # 1. Try executing the payload first
-        print("[GUIHandler] Attempting Linux capture...")
+        logger.debug("[GUIHandler] Attempting Linux capture...")
         stdout, stderr, code = cls._run_docker_exec(
             container_id, 
             ["python3"], # Run python3 interpreter
@@ -106,12 +107,12 @@ try {
 
         # 2. Check for Magic Exit Code 10 (Missing Package)
         if code == 10:
-            print(f"[GUIHandler] Agent reported missing package: '{cls._LINUX_REQUIRED_PKG}'.")
+            logger.debug(f"[GUIHandler] Agent reported missing package: '{cls._LINUX_REQUIRED_PKG}'.")
             # Install the package
             cls._install_linux_package(container_id, cls._LINUX_REQUIRED_PKG)
             
             # Retry execution after installation
-            print("[GUIHandler] Retrying capture after installation...")
+            logger.debug("[GUIHandler] Retrying capture after installation...")
             stdout, stderr, code = cls._run_docker_exec(
                 container_id, 
                 ["python3"], 
@@ -124,7 +125,7 @@ try {
     @classmethod
     def _get_windows_screen(cls, container_id: str) -> bytes:
         """Handles the Windows capture lifecycle."""
-        print("[GUIHandler] Attempting Windows capture via PowerShell...")
+        logger.debug("[GUIHandler] Attempting Windows capture via PowerShell...")
         ps_cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"]
         stdout, stderr, code = cls._run_docker_exec(
             container_id, 
@@ -140,7 +141,7 @@ try {
     @classmethod
     def _install_linux_package(cls, container_id: str, pkg_name: str):
         """Runs pip install inside the container."""
-        print(f"[GUIHandler] Installing required package '{pkg_name}' inside container '{container_id}'...")
+        logger.debug(f"[GUIHandler] Installing required package '{pkg_name}' inside container '{container_id}'...")
         # NOTE: We cannot use sys.executable here because that refers to the HOST python.
         # We must use 'python3' to refer to the container's python.
         cmd = ["python3", "-m", "pip", "install", "--quiet", pkg_name]
@@ -155,10 +156,10 @@ try {
                  if not err_msg: err_msg = stdout.decode(errors='replace').strip()
                  raise RuntimeError(f"Failed to install '{pkg_name}' inside container. Exit code {code}. Error: {err_msg}")
             
-            print(f"[GUIHandler] Successfully installed '{pkg_name}'.")
+            logger.debug(f"[GUIHandler] Successfully installed '{pkg_name}'.")
             
         except Exception as e:
-             print(f"[GUIHandler] Installation failed. Ensure 'python3' and 'pip' are installed in the container.")
+             logger.debug(f"[GUIHandler] Installation failed. Ensure 'python3' and 'pip' are installed in the container.")
              raise e
 
     @classmethod
@@ -191,7 +192,7 @@ try {
         if not stdout.startswith(b'\x89PNG'):
              raise RuntimeError("Data returned by agent is not valid PNG format.")
 
-        print(f"[GUIHandler] Successfully retrieved {len(stdout)} bytes.")
+        logger.debug(f"[GUIHandler] Successfully retrieved {len(stdout)} bytes.")
         return stdout
 
     @classmethod
@@ -214,13 +215,13 @@ if __name__ == "__main__":
         # as it installs Pillow inside the container.
         screenshot_bytes = GUIHandler.get_screen_state(GUIHandler.TARGET_CONTAINER)
 
-        print(f"\n>>> Main Program: Received {len(screenshot_bytes)} bytes of image data. <<<")
+        logger.debug(f"\n>>> Main Program: Received {len(screenshot_bytes)} bytes of image data. <<<")
 
         # Verification: Save to disk
         filename = f"final_agent_capture.png"
         with open(filename, "wb") as f:
             f.write(screenshot_bytes)
-        print(f"Verification image saved to: {filename}")
+        logger.debug(f"Verification image saved to: {filename}")
 
     except Exception as e:
-        print(f"\n>>> ERROR: {e} <<<")
+        logger.debug(f"\n>>> ERROR: {e} <<<")
