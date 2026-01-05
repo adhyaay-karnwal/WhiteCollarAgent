@@ -239,6 +239,7 @@ Important instructions you must follow:
 - DO NOT assume the task is completed and use 'send message' to report that you have completed the task. This happens frequently as LLM received a task and use 'send message' action to reply that the task is completed, despite not doing anything.
 - You must provide concrete parameter values that satisfy the selected action's input_schema. Use an empty object {{}} only when the schema requires no parameters.
 - Sometimes when an event is too long, its content will be externalized and save in a tmp folder. To read the event result, agent MUST use the 'grep' action to extract the context with keywords or use 'stream read' to read the content line by line in file. Perform this step until you understand the content of the file enough to utilize the content."
+- If the last step is complete and the agent is in GUI mode, you MUST switch to CLI mode. This is important to ensure the agent is in the correct mode before the task is completed.
 </rules>
 
 <allowed_action_names>
@@ -487,6 +488,7 @@ ENVIRONMENTAL_CONTEXT_PROMPT = """
 - Current Time: {current_time} ({timezone})
 - User Location: {user_location}
 - Operating System: {operating_system} {os_version} ({os_platform})
+- VM Operating System: {vm_operating_system} {vm_os_version} ({vm_os_platform})
 - Your sandbox and working directory, please save and access your files and folder here: {working_directory}. All files MUST be saved INSIDE the working directory, not outside.
 </agent_environment>
 """
@@ -1135,6 +1137,8 @@ Follow these instructions carefully:
 9. Base your reasoning and decisions ONLY on the current step and any relevant context from the task.
 10. If there are any warnings in the event stream about the current step, consider them in your reasoning and adjust your plan accordingly.
 11. If the event stream shows repeated patterns, figure out the root cause and adjust your plan accordingly.
+12. Focus on the current and VM operating system when reasoning about the current step.
+13. When task is complete, if GUI mode is active, you should switch to CLI mode.
 </reasoning_protocol>
 
 <quality_control>

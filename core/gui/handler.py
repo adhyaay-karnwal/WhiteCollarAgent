@@ -1,12 +1,21 @@
 import subprocess
 import sys
-from typing import Optional, Tuple
-from core.logger import logger
+import json
+import inspect
+from typing import Optional, Tuple, Dict, Any, Union
+
+# Adjust import path as needed for your project structure
+try:
+    from core.logger import logger
+except ImportError:
+    import logging
+    logger = logging.getLogger("GUIHandler")
+    logging.basicConfig(level=logging.DEBUG)
 
 class GUIHandler:
     """
     Static handler for interacting with VM/Container GUIs via agent injection.
-    Automatically handles dependency installation for Linux containers.
+    Supports retrieving screenshots (bytes) and executing actions (dict).
     """
 
     # REPLACE with your container name
@@ -15,42 +24,27 @@ class GUIHandler:
     # Name of the Python package required for Linux screen capture
     _LINUX_REQUIRED_PKG = "Pillow"
 
-    # --- Linux Payload (Python) ---
-    # Tries to import Pillow. If missing, exits with code 10.
-    # If present, takes screenshot and writes raw PNG bytes to stdout buffer.
-    _LINUX_PYTHON_PAYLOAD = """
-import sys
-import io
-import os
-
-# Ensure DISPLAY is set if not already
-if "DISPLAY" not in os.environ:
-    os.environ["DISPLAY"] = ":0"
-
+    # --- Linux Screenshot Payload (Python) ---
+    _LINUX_SCREENSHOT_PAYLOAD = """
+import sys, io, os
+if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":0"
 try:
     from PIL import ImageGrab
 except ImportError:
-    # Magic exit code 10 tells host that the package is missing
-    sys.exit(10)
-
+    sys.exit(10) # Magic exit code for missing package
 try:
-    # Grab screen
     img = ImageGrab.grab()
     img_bytes = io.BytesIO()
-    # Save as PNG to memory
     img.save(img_bytes, format='PNG')
-    # Write raw binary data to stdout buffer
     sys.stdout.buffer.write(img_bytes.getvalue())
     sys.stdout.flush()
 except Exception as e:
-    # Write errors to stderr
     sys.stderr.write(f"AGENT_ERROR: {e}")
     sys.exit(1)
 """
 
-    # --- Windows Payload (PowerShell) ---
-    # (Using built-in .NET)
-    _WINDOWS_PAYLOAD = r"""
+    # --- Windows Screenshot Payload (PowerShell) ---
+    _WINDOWS_SCREENSHOT_PAYLOAD = r"""
 try {
     Add-Type -AssemblyName System.Windows.Forms | Out-Null
     Add-Type -AssemblyName System.Drawing | Out-Null
@@ -78,10 +72,8 @@ try {
         a screenshot and streams the raw PNG bytes back.
         """
         logger.debug(f"[GUIHandler] Initiating screen capture for '{container_id}'...")
-
         os_type = cls._detect_os(container_id)
-        logger.debug(f"[GUIHandler] Detected OS: {os_type.upper()}")
-
+        
         if os_type == "linux":
             return cls._get_linux_screen_with_auto_install(container_id)
         elif os_type == "windows":
@@ -89,84 +81,233 @@ try {
         else:
              raise RuntimeError(f"Could not determine OS type for container '{container_id}'")
 
+    @classmethod
+    def execute_action(cls, container_id: str, action_code: str, input_data: dict) -> Dict[str, Any]:
+        """
+        Executes an action inside the container.
+        Returns a dictionary parsed from the action's JSON stdout.
+        """
+        logger.debug(f"[GUIHandler] Executing action on container '{container_id}'...")
+        os_type = cls._detect_os(container_id)
+        
+        # We wrap the raw action code in a script that handles data injection,
+        # execution, and JSON serialization of results.
+        wrapper_script = cls._generate_python_action_wrapper(action_code, input_data)
+        
+        if os_type == "linux":
+            # Assume 'python3' is available on Linux containers
+            python_executable = ["python3"]
+        elif os_type == "windows":
+            # Assume 'python' is in the PATH on Windows containers. adjust if needed.
+            python_executable = ["python"]
+        else:
+            raise RuntimeError(f"Unknown OS Type: {os_type}")
+
+        logger.debug(f"[GUIHandler] Running action via {python_executable[0]} on {os_type}...")
+        
+        stdout, stderr, code = cls._run_docker_exec(
+            container_id, 
+            python_executable, 
+            wrapper_script.encode('utf-8')
+        )
+        
+        return cls._validate_action_output(stdout, stderr, code)
+
     # ==========================
-    # Internal OS-Specific Logic
+    # Internal OS-Specific Logic (Screenshots)
     # ==========================
 
     @classmethod
     def _get_linux_screen_with_auto_install(cls, container_id: str) -> bytes:
-        """Handles the Linux capture lifecycle, including auto-installing dependencies."""
-        
-        # 1. Try executing the payload first
+        """Handles Linux capture lifecycle, including auto-installing Pillow."""
         logger.debug("[GUIHandler] Attempting Linux capture...")
         stdout, stderr, code = cls._run_docker_exec(
             container_id, 
-            ["python3"], # Run python3 interpreter
-            cls._LINUX_PYTHON_PAYLOAD.encode()
+            ["python3"], 
+            cls._LINUX_SCREENSHOT_PAYLOAD.encode()
         )
 
-        # 2. Check for Magic Exit Code 10 (Missing Package)
         if code == 10:
-            logger.debug(f"[GUIHandler] Agent reported missing package: '{cls._LINUX_REQUIRED_PKG}'.")
-            # Install the package
+            logger.debug(f"[GUIHandler] Missing package: '{cls._LINUX_REQUIRED_PKG}'. Installing...")
             cls._install_linux_package(container_id, cls._LINUX_REQUIRED_PKG)
-            
-            # Retry execution after installation
             logger.debug("[GUIHandler] Retrying capture after installation...")
             stdout, stderr, code = cls._run_docker_exec(
                 container_id, 
                 ["python3"], 
-                cls._LINUX_PYTHON_PAYLOAD.encode()
+                cls._LINUX_SCREENSHOT_PAYLOAD.encode()
             )
 
-        # 3. Validate final output
-        return cls._validate_agent_output(stdout, stderr, code)
+        return cls._validate_screenshot_output(stdout, stderr, code)
 
     @classmethod
     def _get_windows_screen(cls, container_id: str) -> bytes:
-        """Handles the Windows capture lifecycle."""
+        """Handles Windows capture lifecycle via PowerShell."""
         logger.debug("[GUIHandler] Attempting Windows capture via PowerShell...")
         ps_cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"]
         stdout, stderr, code = cls._run_docker_exec(
             container_id, 
             ps_cmd, 
-            cls._WINDOWS_PAYLOAD.encode()
+            cls._WINDOWS_SCREENSHOT_PAYLOAD.encode()
         )
-        return cls._validate_agent_output(stdout, stderr, code)
+        return cls._validate_screenshot_output(stdout, stderr, code)
+
 
     # ==========================
-    # Internal Helpers
+    # Internal Helpers & Validators
+    # ==========================
+
+    @classmethod
+    def _generate_python_action_wrapper(cls, action_code: str, input_data: dict) -> str:
+        """
+        Generates a complete Python script to run inside the container.
+        It injects data, defines the user function, calls it, and prints result as JSON.
+        """
+        try:
+            # 1. Serialize input_data safely
+            input_data_literal = repr(input_data)
+            # 2. Serialize the action_code string itself safely. 
+            #    This ensures that things like '\n' remain as literal backslash-n 
+            #    characters in the generated script's string, rather than becoming real newlines.
+            action_code_literal = repr(action_code)
+        except Exception as e:
+             # Fail early if host-side serialization fails
+             raise ValueError(f"Failed to serialize data on host: {e}")
+
+        # This script runs INSIDE the container
+        wrapper = f"""
+import json
+import inspect
+import sys
+import os
+import traceback
+
+# --- 1. Inject Input Data ---
+try:
+    input_data = {input_data_literal}
+except Exception as e:
+    # Use repr(str(e)) to ensure the error message itself doesn't break the JSON syntax
+    print(json.dumps({{"status": "error", "message": f"Data injection failed: {{repr(str(e))}}"}}))
+    sys.exit(1)
+
+# Prepare namespace
+local_ns = {{'input_data': input_data, 'json': json, 'inspect': inspect, 'sys': sys, 'os': os, 'traceback': traceback}}
+pre_exec_keys = set(local_ns.keys())
+
+# --- 2. Define User Function ---
+# We assign the safely escaped string literal to the variable.
+user_code_str = {action_code_literal}
+
+try:
+    # Execute the function definition
+    exec(user_code_str, local_ns)
+
+    # --- 3. Find the newly defined function ---
+    function_to_call = None
+    for key, value in local_ns.items():
+        # Ensure we don't pick up imports like 'json' or 'sys' as the action function
+        if key not in pre_exec_keys and key != '__builtins__' and inspect.isfunction(value) and value.__module__ == local_ns.get('__name__', None):
+            function_to_call = value
+            break
+
+    if function_to_call is None:
+         print(json.dumps({{"status": "error", "message": "No function definition found in action code."}}))
+         sys.exit(1)
+
+    # --- 4. Call Function & Capture Result ---
+    # The action function is expected to return a dictionary
+    result_dict = function_to_call(input_data)
+
+    # Basic validation that it returned a dict
+    if not isinstance(result_dict, dict):
+         result_dict = {{"status": "success", "stdout": str(result_dict), "stderr": "", "note": "Action did not return a dict, wrapped output."}}
+
+    # --- 5. Print Result as JSON to stdout ---
+    # Ensure the entire dict is serialized safely
+    print(json.dumps(result_dict))
+
+except Exception as e:
+    # Catch unexpected errors during execution (like syntax errors in user code)
+    tb = traceback.format_exc()
+    # Use repr() for message and stderr content to ensure valid JSON even if they contain weird chars
+    err_response = {{"status": "error", "message": f"Execution error: {{repr(str(e))}}", "stderr": tb}}
+    print(json.dumps(err_response))
+    sys.exit(1)
+"""
+        return wrapper
+
+    @classmethod
+    def _validate_screenshot_output(cls, stdout: bytes, stderr: bytes, code: int) -> bytes:
+        """Validator specifically for raw PNG data."""
+        if code != 0:
+            err_msg = stderr.decode(errors='replace').strip()
+            raise RuntimeError(f"Screenshot failed (Exit {code}). Stderr: {err_msg}")
+        
+        if not stdout:
+             raise RuntimeError("Agent finished successfully but returned zero data bytes.")
+
+        if not stdout.startswith(b'\x89PNG'):
+             raise RuntimeError("Data returned by agent is not valid PNG format.")
+
+        logger.debug(f"[GUIHandler] Successfully retrieved {len(stdout)} bytes of image data.")
+        return stdout
+
+    @classmethod
+    def _validate_action_output(cls, stdout: bytes, stderr: bytes, code: int) -> Dict[str, Any]:
+        """Validator specifically for JSON action output."""
+        stdout_str = stdout.decode(errors='replace').strip()
+        stderr_str = stderr.decode(errors='replace').strip()
+
+        # 1. Attempt to parse stdout as JSON
+        try:
+            result_dict = json.loads(stdout_str) if stdout_str else {}
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON from container. Raw stdout: {stdout_str}")
+            # Return a structured error dict even if JSON parsing failed
+            return {
+                "status": "error",
+                "message": "Container output was not valid JSON.",
+                "stdout": stdout_str,
+                "stderr": stderr_str or f"Exit code: {code}",
+                "returncode": code
+            }
+
+        # 2. If the container exited with an error code, ensure the dict indicates error.
+        # The wrapper script usually handles this, but this is a fallback safety check.
+        if code != 0:
+            logger.warning(f"Action container exited with non-zero code {code}.")
+            if not result_dict.get("status") == "error":
+                 # Augment existing dict or create new one if it doesn't look like an error report
+                 result_dict["status"] = "error"
+                 result_dict["message"] = result_dict.get("message", f"Process exited with code {code}")
+                 result_dict["stderr"] = (result_dict.get("stderr", "") + "\n" + stderr_str).strip()
+
+        # 3. Ensure returncode is included in the final result
+        result_dict["returncode"] = code
+        return result_dict
+
+
+    # ==========================
+    # General Helpers
     # ==========================
 
     @classmethod
     def _install_linux_package(cls, container_id: str, pkg_name: str):
-        """Runs pip install inside the container."""
-        logger.debug(f"[GUIHandler] Installing required package '{pkg_name}' inside container '{container_id}'...")
-        # NOTE: We cannot use sys.executable here because that refers to the HOST python.
-        # We must use 'python3' to refer to the container's python.
+        """Runs pip install inside the Linux container."""
+        logger.debug(f"[GUIHandler] Installing '{pkg_name}' in container '{container_id}'...")
         cmd = ["python3", "-m", "pip", "install", "--quiet", pkg_name]
+        # Note: Using _run_docker_exec without stdin_data
+        stdout, stderr, code = cls._run_docker_exec(container_id, cmd, stdin_data=None)
         
-        try:
-            # We use _run_docker_exec but we don't need stdin payload here.
-            stdout, stderr, code = cls._run_docker_exec(container_id, cmd, stdin_data=None)
-            
-            if code != 0:
-                 err_msg = stderr.decode(errors='replace').strip()
-                 # Fallback if stderr is empty, check stdout
-                 if not err_msg: err_msg = stdout.decode(errors='replace').strip()
-                 raise RuntimeError(f"Failed to install '{pkg_name}' inside container. Exit code {code}. Error: {err_msg}")
-            
-            logger.debug(f"[GUIHandler] Successfully installed '{pkg_name}'.")
-            
-        except Exception as e:
-             logger.debug(f"[GUIHandler] Installation failed. Ensure 'python3' and 'pip' are installed in the container.")
-             raise e
+        if code != 0:
+                err_msg = stderr.decode(errors='replace').strip() or stdout.decode(errors='replace').strip()
+                raise RuntimeError(f"Failed to install '{pkg_name}'. Exit {code}. Error: {err_msg}")
 
     @classmethod
     def _run_docker_exec(cls, container_id: str, shell_cmd: list, stdin_data: Optional[bytes] = None) -> Tuple[bytes, bytes, int]:
         """Helper to run docker exec piping data in and out."""
         try:
             cmd = ["docker", "exec", "-i", container_id] + shell_cmd
+            # logger.debug(f"Executing command: {' '.join(cmd)}") # Optional verbose logging
             process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE if stdin_data else None,
@@ -179,49 +320,74 @@ try {
              raise FileNotFoundError("The 'docker' command was not found on the host system.")
 
     @classmethod
-    def _validate_agent_output(cls, stdout: bytes, stderr: bytes, code: int) -> bytes:
-        """Ensures the agent finished successfully and returned valid image data."""
-        if code != 0:
-            err_msg = stderr.decode(errors='replace').strip()
-            raise RuntimeError(f"Agent capture failed (Exit code {code}). Stderr: {err_msg}")
-        
-        if not stdout or len(stdout) == 0:
-             raise RuntimeError("Agent finished successfully but returned zero data bytes.")
-
-        # Basic PNG Header Check
-        if not stdout.startswith(b'\x89PNG'):
-             raise RuntimeError("Data returned by agent is not valid PNG format.")
-
-        logger.debug(f"[GUIHandler] Successfully retrieved {len(stdout)} bytes.")
-        return stdout
-
-    @classmethod
     def _detect_os(cls, container_id: str) -> str:
         """Probes container to guess OS type."""
-        stdout, _, code = cls._run_docker_exec(container_id, ["/bin/sh", "-c", "uname"])
-        if code == 0 and b"Linux" in stdout: return "linux"
+        # Try Linux
+        _, _, code_linux = cls._run_docker_exec(container_id, ["/bin/sh", "-c", "uname"])
+        if code_linux == 0: return "linux"
         
-        stdout, _, code = cls._run_docker_exec(container_id, ["cmd.exe", "/c", "ver"])
-        if code == 0 and b"Windows" in stdout: return "windows"
+        # Try Windows
+        _, _, code_win = cls._run_docker_exec(container_id, ["cmd.exe", "/c", "ver"])
+        if code_win == 0: return "windows"
         
-        return "unknown"
+        # Fallback/Testing assumption (Remove in production if detection is robust)
+        logger.warning(f"Could not detect OS for {container_id}, defaulting to Linux based on previous examples.")
+        return "linux" 
 
 # ==========================================
-# Example Usage
+# Example Usage (Testing the fix)
 # ==========================================
 if __name__ == "__main__":
+    # --- Test 1: Screenshot (should still work) ---
     try:
-        # On first run on a fresh container, this will take longer 
-        # as it installs Pillow inside the container.
+        print("\n--- Testing Screenshot ---")
+        # Note: Ensure TARGET_CONTAINER is running and is the correct OS type for this test.
         screenshot_bytes = GUIHandler.get_screen_state(GUIHandler.TARGET_CONTAINER)
+        print(f"Successfully got screenshot: {len(screenshot_bytes)} bytes.")
+    except Exception as e:
+        print(f"Screenshot failed: {e}")
 
-        logger.debug(f"\n>>> Main Program: Received {len(screenshot_bytes)} bytes of image data. <<<")
+    # --- Test 2: Action Execution (The fix) ---
+    print("\n--- Testing Action Execution ---")
+    
+    # This is the raw code body from your example action
+    sample_action_code = """
+def create_and_run_python_script(input_data: dict) -> dict:
+    import json
+    import sys
+    import subprocess
+    
+    code_snippet = input_data.get("code", "")
+    if not code_snippet.strip():
+        return {"status": "error", "message": "No code provided"}
 
-        # Verification: Save to disk
-        filename = f"final_agent_capture.png"
-        with open(filename, "wb") as f:
-            f.write(screenshot_bytes)
-        logger.debug(f"Verification image saved to: {filename}")
+    try:
+        # Simple execution for testing the harness
+        result = subprocess.check_output([sys.executable, "-c", code_snippet], stderr=subprocess.STDOUT, text=True)
+        return {"status": "success", "stdout": result.strip(), "stderr": ""}
+    except subprocess.CalledProcessError as e:
+        return {"status": "error", "stdout": e.stdout.strip(), "stderr": str(e), "message": "Execution failed"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+"""
+    
+    sample_input = {"code": "print('Hello from inside the container action!')"}
+
+    try:
+        # Execute the action and get a dict back
+        result_dict = GUIHandler.execute_action(
+            GUIHandler.TARGET_CONTAINER, 
+            sample_action_code, 
+            sample_input
+        )
+        
+        print("Action Execution Result (Dictionary):")
+        print(json.dumps(result_dict, indent=2))
+        
+        if result_dict.get("status") == "success":
+            print("\nSUCCESS: Action executed and returned a dict correctly.")
+        else:
+            print("\nFAILURE: Action executed but reported an error.")
 
     except Exception as e:
-        logger.debug(f"\n>>> ERROR: {e} <<<")
+        print(f"\nFATAL ERROR during action execution: {e}")

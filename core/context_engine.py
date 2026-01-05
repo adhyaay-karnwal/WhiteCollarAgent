@@ -153,7 +153,10 @@ class ContextEngine:
             working_directory=AGENT_WORKSPACE_ROOT,
             operating_system=platform.system(),
             os_version=platform.release(),
-            os_platform=platform.platform()
+            os_platform=platform.platform(),
+            vm_operating_system=platform.system(),
+            vm_os_version=platform.release(),
+            vm_os_platform=platform.platform(),
             )
         return prompt
     

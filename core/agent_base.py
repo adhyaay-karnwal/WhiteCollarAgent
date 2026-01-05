@@ -272,7 +272,7 @@ class AgentBase:
 
                 logger.debug(f"[AGENT QUERY] {action_query}")
                 action_decision = await self.action_router.select_action_in_task(
-                    query=action_query, reasoning=reasoning
+                    query=action_query, reasoning=reasoning, GUI_mode=STATE.gui_mode
                 )
             else:
                 logger.debug(f"[AGENT QUERY] {query}")

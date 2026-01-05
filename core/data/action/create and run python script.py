@@ -63,7 +63,6 @@ def create_and_run_python_script(input_data: dict) -> dict:
     stderr_capture = io.StringIO()
 
     def _install_package(pkg_name: str) -> bool:
-        """Install a package using pip in the current environment."""
         try:
             subprocess.check_call(
                 [sys.executable, '-m', 'pip', 'install', '--quiet', pkg_name],
@@ -76,7 +75,6 @@ def create_and_run_python_script(input_data: dict) -> dict:
             return False
 
     def _extract_imports(code: str) -> set:
-        """Extract module names from import statements."""
         imports = set()
         # Match: import module, import module as alias, from module import ...
         patterns = [
