@@ -90,7 +90,7 @@ export GOOGLE_API_KEY=<YOUR_KEY_HERE>
 ```
 Run:
 ```bash
-./run.sh
+python start.py
 ```
 
 This executes the built-in **White Collar Agent**, that you can communicate to:
