@@ -1053,6 +1053,7 @@ Follow these instructions carefully:
 6. Play close attention to the state of the screen and the elements on the screen and the data on screen and the relevant data extracted from the screen.
 7. You MUST reason according to the previous events, action and reasoning to understand the recent action trajectory and check if the previous action works as intented or not.
 7. You MUST check if the previous reasoning and action works as intented or not and how it affects your current action.
+8. If an interaction based action is not working as intented, you should try to reason about the problem and adjust accordingly.
 </reasoning_protocol>
 
 <quality_control>

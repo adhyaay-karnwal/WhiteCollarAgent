@@ -7,19 +7,16 @@ Created on Fri Aug  1 14:17:29 2025
 
 from __future__ import annotations
 import asyncio
-import base64, os, requests
-from io import BytesIO
-from typing import Any, Dict, Optional, List
+import base64, requests
+from typing import Any, Dict, Optional
 
-import json, re
-from PIL import Image
-import pytesseract
-from openai import OpenAI
+import re
 
 from core.models.factory import ModelFactory
 from core.models.types import InterfaceType
 from core.google_gemini_client import GeminiClient
 from core.logger import logger
+from core.state.agent_state import STATE
 
 class VLMInterface:
     _CODE_BLOCK_RE = re.compile(r"^```(?:\w+)?\s*|\s*```$", re.MULTILINE)
@@ -72,11 +69,11 @@ class VLMInterface:
         if self.provider == "byteplus":
             response = self._byteplus_describe_bytes(image_bytes, system_prompt, user_prompt)
         
-        # TODO return response as content + token info, then clean up using:
-        # cleaned = re.sub(self._CODE_BLOCK_RE, "", response.get("content", "").strip())
+        cleaned = re.sub(self._CODE_BLOCK_RE, "", response.get("content", "").strip())
         
-        logger.info(f"[LLM RECV] {response}")
-        return response
+        STATE.set_agent_property("token_count", STATE.get_agent_property("token_count", 0) + response.get("tokens_used", 0))
+        logger.info(f"[LLM RECV] {cleaned}")
+        return cleaned
 
     async def generate_response_async(
         self,
@@ -114,7 +111,13 @@ class VLMInterface:
             temperature=self.temperature,
             max_tokens=2048,
         )
-        return response.choices[0].message.content.strip()
+        content = response.choices[0].message.content.strip()
+        total_tokens = response.usage.prompt_tokens + response.usage.completion_tokens
+
+        return {
+            "tokens_used": total_tokens or 0,
+            "content": content or ""
+        }
     
     def _ollama_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
         img_b64 = base64.b64encode(image_bytes).decode()
@@ -129,19 +132,31 @@ class VLMInterface:
         url: str = f"{self.remote_url.rstrip('/')}/vision"
         r = requests.post(url, json=payload, timeout=120)
         r.raise_for_status()
-        return r.json().get("response", "").strip()
+        content = r.json().get("response", "").strip()
+        total_tokens = r.json().get("usage", {}).get("total_tokens", 0)
+        
+        return {
+            "tokens_used": total_tokens or 0,
+            "content": content or ""
+        }
     
     def _gemini_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
         if not self._gemini_client:
             raise RuntimeError("Gemini client was not initialised.")
 
-        return self._gemini_client.generate_multimodal(
+        content = self._gemini_client.generate_multimodal(
             self.model,
             text=usr,
             image_bytes=image_bytes,
             system_prompt=sys,
             temperature=self.temperature,
         )
+        total_tokens = content.get("usageMetadata", {}).get("totalTokenCount", 0)
+        
+        return {
+            "tokens_used": total_tokens or 0,
+            "content": content or ""
+        }
 
     def _byteplus_describe_bytes(self, image_bytes: bytes, sys: str | None, usr: str) -> str:
         img_b64 = base64.b64encode(image_bytes).decode()
@@ -182,7 +197,12 @@ class VLMInterface:
                 or choices[0].get("delta", {}).get("content", "")
                 or ""
             ).strip()
-            return content
+            total_tokens = result.get("usage", {}).get("total_tokens", 0)
+            
+            return {
+                "tokens_used": total_tokens or 0,
+                "content": content or ""
+            }
 
         return ""
 

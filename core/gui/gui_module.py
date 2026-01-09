@@ -111,7 +111,6 @@ class GUIModule:
             # 2. Check Limits
             # ===================================
             # TODO: Check Limits
-            # TODO: Update Limits
 
             # ===================================
             # 3. Select Action
