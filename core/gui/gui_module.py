@@ -174,7 +174,6 @@ class GUIModule:
             return {
                 "status": "ok",
                 "message": "Action completed successfully",
-                "next_action": None,
             }
 
         except Exception as e:

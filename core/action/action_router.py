@@ -249,7 +249,7 @@ class ActionRouter:
         ignore_actions = ["create and start task", "ignore"]
     
         # Additional candidate actions from search
-        candidate_names = self.action_library.search_action(query, top_k=10)
+        candidate_names = self.action_library.search_action(query, top_k=50)
         logger.info(f"ActionRouter found candidate actions: {candidate_names}")
         for name in candidate_names:
             act = self.action_library.retrieve_action(name)
