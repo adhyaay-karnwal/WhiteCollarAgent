@@ -79,8 +79,8 @@ This is an open-source project and is still in development, so we welcome any su
 
 ### Installation
 ```bash
-git clone https://github.com/zfoong/White-Collar-Agent.git
-cd White-Collar-Agent
+git clone https://github.com/zfoong/WhiteCollarAgent.git
+cd WhiteCollarAgent
 conda env create -f environment.yml
 ```
 
