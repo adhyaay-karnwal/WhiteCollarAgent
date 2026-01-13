@@ -266,8 +266,6 @@ class ActionRouter:
                 "input_schema": act.input_schema,
                 "output_schema": act.output_schema
             })
-
-            logger.info(f"[TEST] ActionRouter found action candidates: {act.name} - {act.mode}")
     
         # Dedupe names while preserving insertion order
         action_name_candidates = list({candidate["name"]: None for candidate in action_candidates}.keys())
@@ -339,7 +337,7 @@ class ActionRouter:
         for attempt in range(max_retries):
             system_prompt, _ = self.context_engine.make_prompt(
                 user_flags={"query": False, "expected_output": False},
-                system_flags={"agent_info": not is_task, "conversation_history": True, "event_stream": False, "gui_event_stream": True, "task_state": not is_task, "policy": False},
+                system_flags={"role_info": not is_task, "agent_info": not is_task, "conversation_history": not is_task, "event_stream": False, "gui_event_stream": not is_task, "task_state": not is_task, "policy": False},
             )
             raw_response = await self.vlm_interface.generate_response_async(
                 image_bytes,

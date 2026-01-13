@@ -1041,6 +1041,10 @@ Your goal is to describe the screen in your reasoning and perform reasoning for 
 Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action.
 </objective>
 
+<validation>
+- Verify if the screenshot visually shows if the previous action has been performed successfully.
+</validation>
+
 <reasoning_protocol>
 Follow these instructions carefully:
 1. Base your reasoning and decisions ONLY on the current screen and any relevant context from the task.
@@ -1079,3 +1083,88 @@ Return ONLY a JSON object with two fields:
 }}
 </output_format>
 """
+
+GUI_IMAGE_DESCRIPTION_PROMPT = """
+You are an advanced UI Decomposition and Semantic Analysis Agent. Your sole purpose is to ingest a UI screenshot and generate a structured, systematic breakdown of its constituent parts, their spatial relationships, states, and functional intentions.
+
+Do not provide a narrative description for a human user. Instead, produce a structured report that an LLM or a UI automation system could use to build a mental model of the screen.
+
+Analyze the provided image and output your findings in the following strictly structured Markdown format.
+
+### 1. Screen Classification & Intent
+*   **Screen_Type:** Classify the immediate view (e.g., `Browser::NewTab`, `Modal::Confirmation`, `Form::Login`, `Dashboard::Analytics`, `VideoPlayer::Controls`).
+*   **Primary_Intent:** State the single most critical action the user is expected to perform here.
+*   **Secondary_Intents:** List alternative or interrupting actions.
+
+### 2. Spatial Layout & Containers
+Identify the major bounding boxes and structural regions of the screen.
+*   **Macro_Containers:** List main structural areas (e.g., `Top Navigation Bar`, `Main Content Viewport`, `Side Panel`).
+*   **Overlays & Modals:** Identify any elements sitting on top of the main content (e.g., `Alert Dialog [Top-Right]`, `Bottom Sheet`, `Toast Notification`).
+*   **Layout_Structure:** Briefly describe how the main content is organized (e.g., `Single Column Centered`, `Two-Column [Left-Nav, Right-Content]`, `Grid`).
+
+### 3. Static Content Inventory
+Extract text that serves as information, structure, or instruction, distinct from interactive controls.
+*   **Structural_Headings:** (H1, H2 equivalents indicating section topics).
+*   **Instructional_Text:** (Body text telling the user *how* or *why* to do something).
+*   **Data_Labels:** (Static text labeling adjacent data points).
+
+### 4. Interactive Component Inventory
+Provide a detailed list of every interactable element. Use the following schema for each entry:
+*   **[Component Type] "Label/Identifier"**
+    *   **Location:** General vicinity (e.g., Top-Right, Center-Mid, Bottom-Left Floating).
+    *   **Function:** The action triggered on interaction (e.g., Submits form, Navigates to X, Dismisses modal, Opens menu).
+    *   **State:** Current status (e.g., Enabled, Disabled, Selected, Empty, Contains Text "xyz").
+    *   **Visual_Cue:** Dominant visual characteristic (e.g., Solid Blue Button, Outlined Icon, Underlined Link).
+
+*(Example entry format:)*
+*   *`[Button::Primary]` "Restore Pages"*
+    *   *Location: Top-Right Overlay Dialog*
+    *   *Function: Initiates session restoration process.*
+    *   *State: Enabled*
+    *   *Visual_Cue: Solid blue background, white text.*
+
+### 5. Visual & Functional Semantics
+Describe non-textual elements and global states.
+*   **Iconography_Semantics:** Map prominent icons to their functional meaning (e.g., `Magnifying Glass -> Search Action`, `Three Dots -> Contextual Menu`, `X -> Close/Dismiss`).
+*   **Global_Visual_State:** Describe the overall visual mode (e.g., `Dark Mode Enabled`, `High Contrast`, `Dense Information Display`).
+
+***
+**Constraints:**
+*   Maintain the strict Markdown heading structure provided above.
+*   Be precise and economical with language. Avoid conversational filler.
+*   Ensure every interactable element visible is listed in Section 4.
+"""
+
+GUI_PIXEL_POSITION_PROMPT = """
+You are a UI element detection system. Your job is to extract a structured list of interactable elements from the provided 1064x1064 screenshot.
+Element to find: {element_to_find}
+
+Guidelines:
+1.  **Coordinate System:** Use a 0-indexed pixel grid where (0,0) is the top-left corner. The max X is 1063, max Y is 1063.
+2.  **Bounding Boxes:** For every element, provide an inclusive bounding box as [x_min, y_min, x_max, y_max].
+3.  **Output Format:** Return ONLY a valid JSON list of objects. Do not provide any conversational text before or after the JSON.
+
+Scale x by 1.06 and y by 1.08
+Analyze the image and generate the JSON list.
+"""
+
+GUI_ACTION_PARAMETERS_VALIDATION_PROMPT = """
+You are a GUI agent and your goal is to validate the action parameters.
+
+You are given the following action decision:
+{action_decision}
+
+You are given the following query (ignore coordinates in the query):
+{query}
+
+You need to validate the action parameters and return True if they are valid, False otherwise.
+If action parameters are coordinates, then you need to validate if the coordinates are accurate based on what is being asked.
+
+Output Format:
+Return ONLY a valid JSON object with this structure and no extra commentary:
+{{
+  "valid": <True if the action parameters are valid, False otherwise>
+}}
+"""
+
+DATA="can you book a flight for me in GUI mode from London to Tokyo on the 20 Feb and do not ask any questions"

@@ -301,8 +301,8 @@ class AgentBase:
             Dictionary with action_output, new_session_id, and event_stream_summary
         """
         current_step = self.state_manager.get_current_step()
-        if current_step is None:
-            raise ValueError("No current step found in StateManager")
+        # if current_step is None:
+        #     raise ValueError("No current step found in StateManager")
 
         logger.debug("[GUI MODE] Entered GUI mode.")
         

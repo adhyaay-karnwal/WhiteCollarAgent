@@ -1,6 +1,7 @@
 import subprocess
 import json
 import time
+import io
 from typing import Optional, Tuple, Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,8 +29,8 @@ class GUIHandler:
     # Default container name (can be overridden per instance)
     TARGET_CONTAINER = "simple-agent-desktop"
 
-    # Name of the Python package required for Linux screen capture
-    _LINUX_REQUIRED_PKG = "Pillow"
+    # Name of the Python packages required for Linux screen capture
+    _LINUX_REQUIRED_PKG = "mss Pillow"
     
     # Magic exit code used by Linux screenshot payload to indicate missing package
     _EXIT_CODE_MISSING_PACKAGE = 10
@@ -42,15 +43,20 @@ class GUIHandler:
 import sys, io, os
 if "DISPLAY" not in os.environ: os.environ["DISPLAY"] = ":1"
 try:
-    from PIL import ImageGrab
+    import mss
+    from PIL import Image
 except ImportError:
     sys.exit(10)  # Exit code 10 indicates missing package (handled by handler)
 try:
-    img = ImageGrab.grab()
-    img_bytes = io.BytesIO()
-    img.save(img_bytes, format='PNG')
-    sys.stdout.buffer.write(img_bytes.getvalue())
-    sys.stdout.flush()
+    with mss.mss() as sct:
+        # Capture the full virtual desktop (monitor 0 is the entire virtual screen)
+        mon = sct.monitors[0]
+        shot = sct.grab(mon)
+        img = Image.frombytes('RGB', shot.size, shot.rgb)
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format='PNG')
+        sys.stdout.buffer.write(img_bytes.getvalue())
+        sys.stdout.flush()
 except Exception as e:
     sys.stderr.write(f"AGENT_ERROR: {e}")
     sys.exit(1)
@@ -61,10 +67,18 @@ except Exception as e:
 try {
     Add-Type -AssemblyName System.Windows.Forms | Out-Null
     Add-Type -AssemblyName System.Drawing | Out-Null
-    $screen = [System.Windows.Forms.Screen]::PrimaryScreen
-    $bitmap = New-Object System.Drawing.Bitmap $screen.Bounds.Width, $screen.Bounds.Height
+    # Get all screens to calculate the full virtual desktop bounds
+    $screens = [System.Windows.Forms.Screen]::AllScreens
+    $left = ($screens | Measure-Object -Property Bounds.Left -Minimum).Minimum
+    $top = ($screens | Measure-Object -Property Bounds.Top -Minimum).Minimum
+    $right = ($screens | Measure-Object -Property Bounds.Right -Maximum).Maximum
+    $bottom = ($screens | Measure-Object -Property Bounds.Bottom -Maximum).Maximum
+    $width = $right - $left
+    $height = $bottom - $top
+    $bitmap = New-Object System.Drawing.Bitmap $width, $height
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $graphics.CopyFromScreen($screen.Bounds.Left, $screen.Bounds.Top, 0, 0, $bitmap.Size)
+    # Copy from the top-left of the virtual desktop
+    $graphics.CopyFromScreen($left, $top, 0, 0, $bitmap.Size)
     $ms = New-Object System.IO.MemoryStream
     $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     [Console]::OpenStandardOutput().Write($ms.ToArray(), 0, $ms.Length)
@@ -82,7 +96,7 @@ try {
     def get_screen_state(cls, container_id: str, debug: bool = False) -> bytes:
         """
         Injects an agent script into the specified Docker container to take
-        a screenshot and streams the raw PNG bytes back.
+        a screenshot and streams the raw PNG bytes back with a 10x10 pixel grid overlay.
         """
         logger.debug(f"[GUIHandler] Initiating screen capture for '{container_id}' (debug={debug})...")
         os_type = cls._detect_os(container_id)
@@ -93,6 +107,9 @@ try {
             img_bytes = cls._get_windows_screen(container_id)
         else:
             raise RuntimeError(f"Could not determine OS type for container '{container_id}'")
+
+        # Overlay grid on the screenshot
+        # img_bytes = cls._add_grid_overlay(img_bytes)
 
         if debug:
             try:
@@ -160,7 +177,8 @@ try {
         )
 
         if code == cls._EXIT_CODE_MISSING_PACKAGE:
-            logger.debug(f"[GUIHandler] Missing package: '{cls._LINUX_REQUIRED_PKG}'. Installing...")
+            logger.debug(f"[GUIHandler] Missing package(s): '{cls._LINUX_REQUIRED_PKG}'. Installing...")
+            # Install all required packages at once
             cls._install_linux_package(container_id, cls._LINUX_REQUIRED_PKG)
             logger.debug("[GUIHandler] Retrying capture after installation...")
             stdout, stderr, code = cls._run_docker_exec(
@@ -267,6 +285,53 @@ except Exception as e:
         return wrapper
 
     @classmethod
+    def _add_grid_overlay(cls, img_bytes: bytes) -> bytes:
+        """
+        Overlays a 10x10 pixel grid on the screenshot to help with coordinate reference.
+        Returns the modified image as PNG bytes.
+        """
+        try:
+            from PIL import Image, ImageDraw
+            
+            # Load image from bytes
+            img = Image.open(io.BytesIO(img_bytes))
+            
+            # Convert to RGBA if not already (to support transparency)
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            
+            width, height = img.size
+            
+            # Create a drawing context
+            draw = ImageDraw.Draw(img)
+            
+            # Grid spacing: 10 pixels
+            grid_size = 8
+            
+            # Use semi-transparent red for grid lines (R, G, B, Alpha)
+            grid_color = (255, 0, 0, 64)  # Red with 25% opacity
+            
+            # Draw vertical lines
+            for x in range(0, width, grid_size):
+                draw.line([(x, 0), (x, height)], fill=grid_color, width=1)
+            
+            # Draw horizontal lines
+            for y in range(0, height, grid_size):
+                draw.line([(0, y), (width, y)], fill=grid_color, width=1)
+            
+            # Save to bytes
+            output = io.BytesIO()
+            img.save(output, format='PNG')
+            return output.getvalue()
+            
+        except ImportError:
+            logger.warning("[GUIHandler] PIL/Pillow not available for grid overlay, returning original image")
+            return img_bytes
+        except Exception as e:
+            logger.warning(f"[GUIHandler] Failed to add grid overlay: {e}, returning original image")
+            return img_bytes
+
+    @classmethod
     def _validate_screenshot_output(cls, stdout: bytes, stderr: bytes, code: int) -> bytes:
         """Validator specifically for raw PNG data."""
         if code != 0:
@@ -323,9 +388,10 @@ except Exception as e:
 
     @classmethod
     def _install_linux_package(cls, container_id: str, pkg_name: str):
-        """Runs pip install inside the Linux container."""
+        """Runs pip install inside the Linux container. Can handle space-separated package names."""
+        packages = pkg_name.split()  # Split space-separated packages
         logger.debug(f"[GUIHandler] Installing '{pkg_name}' in container '{container_id}'...")
-        cmd = ["python3", "-m", "pip", "install", "--quiet", pkg_name]
+        cmd = ["python3", "-m", "pip", "install", "--quiet"] + packages
         # Note: Using _run_docker_exec without stdin_data
         stdout, stderr, code = cls._run_docker_exec(container_id, cmd, stdin_data=None)
         
