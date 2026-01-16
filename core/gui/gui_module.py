@@ -146,6 +146,8 @@ class GUIModule:
             else:
                 reasoning_result, action_search_query = await self.vlm_flow(query=query, png_bytes=png_bytes)
 
+            reasoning: str = reasoning_result.reasoning
+
             # ===================================
             # 4. Select Action
             # ===================================
@@ -238,7 +240,7 @@ class GUIModule:
         # ==================================
         # 2. Reasoning
         # ==================================
-        reasoning_result, item_index = await self._perform_reasoning_GUI(query=query, png_bytes=annotated_image_bytes)
+        reasoning_result, item_index = await self._perform_reasoning_GUI_omniparser(png_bytes=annotated_image_bytes)
         action_query: str = reasoning_result.action_query
 
         # ==================================
@@ -326,7 +328,7 @@ class GUIModule:
 
             try:
                 # Parse and validate the structured JSON response
-                reasoning_result: ReasoningResult = self._parse_reasoning_response(response)
+                reasoning_result, _ = self._parse_reasoning_response(response)
 
                 if self.gui_event_stream_manager and log_reasoning_event:
                     self.set_gui_event_stream(reasoning_result.reasoning)
@@ -452,7 +454,6 @@ class GUIModule:
                 image_bytes=png_bytes,
                 system_prompt=system_prompt,
                 user_prompt=prompt,
-                debug=True,
             )
 
             try:
