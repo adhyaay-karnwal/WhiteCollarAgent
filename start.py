@@ -27,6 +27,15 @@ OMNIPARSER_MARKER_FILE = ".omniparser_setup_complete_v1"
 # ==========================================
 # HELPER FUNCTIONS (Config & System Internals)
 # ==========================================
+def _wrap_windows_bat(cmd_list: list[str]) -> list[str]:
+    if sys.platform != "win32":
+        return cmd_list
+    exe = shutil.which(cmd_list[0])
+    if exe and exe.lower().endswith((".bat", ".cmd")):
+        # /d disables AutoRun (more predictable); /c runs then exits
+        return ["cmd.exe", "/d", "/c", exe] + cmd_list[1:]
+    return cmd_list
+    
 def load_config() -> Dict[str, Any]:
     """Reads the existing config file safely."""
     if not os.path.exists(CONFIG_FILE):
@@ -54,6 +63,7 @@ def run_command(cmd_list: list[str], cwd: Optional[str] = None, check: bool = Tr
     Centralized helper to run subprocesses robustly (BLOCKING).
     Waits for command to finish.
     """
+    cmd_list = _wrap_windows_bat(cmd_list)
     my_env = os.environ.copy()
     if env_extras:
         my_env.update(env_extras)
@@ -96,6 +106,7 @@ def launch_background_command(cmd_list: list[str], cwd: Optional[str] = None, en
     NEW HELPER: Launches a process in the background and moves on immediately (NON-BLOCKING).
     Using Popen instead of run.
     """
+    cmd_list = _wrap_windows_bat(cmd_list)
     my_env = os.environ.copy()
     if env_extras: my_env.update(env_extras)
     my_env["PYTHONUNBUFFERED"] = "1"
@@ -240,9 +251,6 @@ def setup_global_environment(requirements_file: str = REQUIREMENTS_FILE):
 # OPTIMIZED OMNIPARSER SETUP
 # ==========================================
 def setup_omniparser_local(force_cpu: bool, fast_mode: bool):
-    if os.getenv("USE_CONDA") != "True":
-        print("⚠️ Skipping OmniParser setup because Conda usage is disabled (--no-conda).")
-        return
 
     print("\n======================================")
     print(" Setting up OmniParser locally")
