@@ -566,7 +566,7 @@ class GUIModule:
 
         reasoning = parsed.get("reasoning")
         action_query = parsed.get("action_query")
-        item_index = parsed.get("item_index")
+        item_index = parsed.get("item_index", 0)
 
         if not isinstance(reasoning, str) or not isinstance(action_query, str):
             raise ValueError(f"Invalid reasoning schema: {parsed}")

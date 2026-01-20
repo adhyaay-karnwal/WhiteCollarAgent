@@ -485,6 +485,8 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
 
         cmd_string = subprocess.list2cmdline(cmd_list)     # Windows-safe quoting
         cmd_string = _escape_for_cmd_k(cmd_string)         # Safe inside cmd /k "..."
+        
+        print({cmd_string})
 
         # Also add an explicit empty window title: start "" ...
         launch_cmd = f'start "" /MAX cmd /k "set PYTHONUNBUFFERED=1 && {cmd_string}"'
