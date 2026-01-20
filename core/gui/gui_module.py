@@ -218,7 +218,7 @@ class GUIModule:
         # ==================================
         # 3. Get Pixel Position
         # ==================================
-        pixel_position: List[int] = await self._get_pixel_position_vlm(png_bytes=png_bytes, action_query=action_query)
+        pixel_position: List[int] = await self._get_pixel_position_vlm(image_bytes=png_bytes, element_to_find=action_query)
 
         # ==================================
         # 4. Construct Action Search Query

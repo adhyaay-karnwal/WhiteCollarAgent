@@ -485,9 +485,8 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
         else:
             cmd_list = [sys.executable, "-u", abs_main_script_path] + pass_through_args
 
-
-        cmd_string = subprocess.list2cmdline(cmd_list)     # Windows-safe quoting
-        cmd_string = _escape_for_cmd_k(cmd_string)         # Safe inside cmd /k "..."
+        cmd_string = subprocess.list2cmdline(cmd_list)
+        cmd_string = _escape_for_cmd(cmd_string)
 
         # CHANGED FOR BLOCKING:
         # 1. Removed 'start "" /MAX'. Running 'cmd /c' directly makes it a child process we can wait on.
