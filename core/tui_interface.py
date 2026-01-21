@@ -130,8 +130,8 @@ class _CraftApp(App):
     CSS = """
     Screen {
         layout: vertical;
-        background: #111111;
-        color: #f5f5f5;
+        background: #000000;
+        color: #e5e5e5;
     }
 
     /* Shared chrome */
@@ -142,8 +142,10 @@ class _CraftApp(App):
 
     #chat-panel, #action-panel {
         height: 100%;
-        border: solid #fff;
+        border: solid #2a2a2a;
         border-title-align: left;
+        border-title-color: #a0a0a0;
+        background: #000000;
         margin: 0 1;
         min-width: 0;  /* allow panels to shrink with the terminal */
     }
@@ -153,6 +155,7 @@ class _CraftApp(App):
         text-overflow: fold;
         overflow-x: hidden;
         min-width: 0;  /* enable reflow instead of clamped min-content width */
+        background: #000000;
     }
 
     #chat-panel {
@@ -167,12 +170,14 @@ class _CraftApp(App):
         height: 1fr;
         padding: 0 1;
         overflow-x: hidden;
+        background: #000000;
     }
 
     #bottom-region {
         height: auto;
-        border-top: solid #333333;
+        border-top: solid #1a1a1a;
         padding: 0;
+        background: #000000;
     }
 
     #status-bar {
@@ -181,28 +186,35 @@ class _CraftApp(App):
         text-wrap: nowrap;
         overflow: hidden;
         text-style: bold;
-        color: #dddddd;
+        color: #a0a0a0;
+        background: #000000;
         padding: 0 1;
     }
 
     #chat-input {
-        border: solid #444444;
-        background: #1a1a1a;
+        border: solid #2a2a2a;
+        background: #0a0a0a;
+        color: #e5e5e5;
         margin: 0 1;
+    }
+
+    #chat-input:focus {
+        border: solid #ff4f18;
     }
 
     /* Menu layer */
     #menu-layer {
         align: center middle;
         content-align: center middle;
+        background: #000000;
     }
 
     #menu-panel {
         width: 90;
         max-width: 100%;
         max-height: 95%;
-        border: solid #444444;
-        background: #0f0f0f;
+        border: solid #2a2a2a;
+        background: #000000;
         padding: 3 5;
         content-align: center middle;
         overflow: auto;
@@ -216,6 +228,20 @@ class _CraftApp(App):
         text-style: bold;
         margin-bottom: 1;
         content-align: center middle;
+    }
+
+    #menu-copy {
+        color: #a0a0a0;
+        margin-bottom: 1;
+    }
+
+    #provider-hint {
+        color: #a0a0a0;
+        text-style: bold;
+    }
+
+    #menu-hint {
+        color: #666666;
     }
 
     /* Command-prompt style options */
@@ -234,7 +260,7 @@ class _CraftApp(App):
 
     /* Default item text */
     .menu-item {
-        color: #cfcfcf;
+        color: #a0a0a0;
     }
 
     /* Highlight for list selections */
@@ -264,15 +290,32 @@ class _CraftApp(App):
         width: 70;
         max-width: 100%;
         max-height: 90%;
-        border: solid #444444;
-        background: #101010;
+        border: solid #2a2a2a;
+        background: #000000;
         padding: 2 3 3 3;
         content-align: center top;
         overflow: auto;
     }
 
+    #settings-card Static {
+        color: #a0a0a0;
+    }
+
+    #settings-title {
+        text-style: bold;
+        color: #ffffff;
+        margin-bottom: 1;
+    }
+
     #settings-card Input {
         width: 100%;
+        border: solid #2a2a2a;
+        background: #0a0a0a;
+        color: #e5e5e5;
+    }
+
+    #settings-card Input:focus {
+        border: solid #ff4f18;
     }
 
     /* Settings actions styled like a prompt list */
@@ -831,13 +874,13 @@ class TUIInterface:
     """Asynchronous Textual TUI driver that feeds user prompts to the agent."""
 
     _STYLE_COLORS = {
-        "user": "bold plum1",
-        "agent": "bold dark_orange",
-        "action": "bold deep_sky_blue1",
-        "task": "bold dark_orange",
-        "error": "bold red",
-        "info": "bold grey70",
-        "system": "bold medium_orchid",
+        "user": "bold #ffffff",
+        "agent": "bold #ff4f18",
+        "action": "bold #a0a0a0",
+        "task": "bold #ff4f18",
+        "error": "bold #ff4f18",
+        "info": "bold #666666",
+        "system": "bold #a0a0a0",
     }
 
     _CHAT_LABEL_WIDTH = 7
@@ -1279,9 +1322,9 @@ class TUIInterface:
 
         # Determine color based on style and completion
         if entry.style == "task":
-            colour = "bold dark_orange"
+            colour = "bold #ff4f18"
         else:  # action
-            colour = "bold deep_sky_blue1"
+            colour = "bold #a0a0a0"
 
         # Format: [icon]
         label_text = f"[{icon}]"
