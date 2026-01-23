@@ -2,8 +2,8 @@ from .types import InterfaceType
 
 MODEL_REGISTRY = {
     "openai": {
-        InterfaceType.LLM: "gpt-4o",
-        InterfaceType.VLM: "gpt-4o-2024-08-06",
+        InterfaceType.LLM: "gpt-5.2-2025-12-11",
+        InterfaceType.VLM: "gpt-5.2-2025-12-11",
         InterfaceType.EMBEDDING: "text-embedding-3-small",
     },
     "gemini": {
@@ -12,7 +12,7 @@ MODEL_REGISTRY = {
         InterfaceType.EMBEDDING: "text-embedding-004",
     },
     "byteplus": {
-        InterfaceType.LLM: "kimi-k2-250711",
+        InterfaceType.LLM: "kimi-k2-250905",
         InterfaceType.VLM: "seed-1-6-250915",
         InterfaceType.EMBEDDING: "skylark-embedding-vision-250615",
     },

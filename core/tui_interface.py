@@ -23,6 +23,8 @@ from textual.widgets import RichLog as _BaseLog
 from textual.widgets import ListView, ListItem, Label
 
 from core.logger import logger
+from core.models.model_registry import MODEL_REGISTRY
+from core.models.types import InterfaceType
 
 if False:  # pragma: no cover
     from core.agent_base import AgentBase  # type: ignore
@@ -85,6 +87,30 @@ class _ContextMenu(OptionList):
         if event.key == "escape":
             self.remove()
             event.stop()
+
+
+class _PasteableInput(Input):
+    """Input widget with enhanced paste support using pyperclip."""
+
+    BINDINGS = [
+        ("ctrl+v", "paste_from_clipboard", "Paste"),
+        ("shift+insert", "paste_from_clipboard", "Paste"),
+    ]
+
+    def action_paste_from_clipboard(self) -> None:
+        """Paste text from clipboard using pyperclip for better compatibility."""
+        try:
+            import pyperclip
+            text = pyperclip.paste()
+            if text:
+                # Insert text at cursor position
+                self.insert_text_at_cursor(text)
+        except ImportError:
+            # Fallback to default paste action
+            self.action_paste()
+        except Exception:
+            # Fallback to default paste action on any error
+            self.action_paste()
 
 
 class _ConversationLog(_BaseLog):
@@ -483,6 +509,16 @@ class _CraftApp(App):
         border: solid #ff4f18;
     }
 
+    #model-display {
+        color: #ff4f18;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    #api-key-label {
+        margin-top: 1;
+    }
+
     /* Settings actions styled like a prompt list */
     #settings-actions-list {
         width: 24;
@@ -544,6 +580,24 @@ class _CraftApp(App):
         "cancel",
     ]
 
+    _PROVIDER_API_KEY_NAMES = {
+        "openai": "OpenAI",
+        "gemini": "Google Gemini",
+        "byteplus": "BytePlus",
+        "remote": "Ollama (remote)",
+    }
+
+    def _get_api_key_label(self) -> str:
+        """Get the label for the API key input based on current provider."""
+        provider_name = self._PROVIDER_API_KEY_NAMES.get(self._provider, self._provider)
+        return f"API Key for {provider_name}"
+
+    def _get_model_for_provider(self, provider: str) -> str:
+        """Get the LLM model name for a provider from the model registry."""
+        if provider in MODEL_REGISTRY:
+            return MODEL_REGISTRY[provider].get(InterfaceType.LLM, "Unknown")
+        return "Unknown"
+
     def __init__(self, interface: "TUIInterface", provider: str, api_key: str) -> None:
         super().__init__()
         self._interface = interface
@@ -553,6 +607,10 @@ class _CraftApp(App):
         self._last_rendered_status: str = ""
         self._provider = provider
         self._api_key = api_key
+        # Track saved API keys per provider (to know whether to reset on provider change)
+        self._saved_api_keys: dict[str, str] = {provider: api_key} if api_key else {}
+        # Track the provider selected in settings before saving
+        self._settings_provider: str = provider
 
     def compose(self) -> ComposeResult:  # pragma: no cover - declarative layout
         yield Container(
@@ -625,6 +683,12 @@ class _CraftApp(App):
         # Hide the main menu panel while settings are open
         self.show_settings = True
 
+        # Reset settings provider tracking to current provider
+        self._settings_provider = self._provider
+
+        # Get model name for current provider
+        model_name = self._get_model_for_provider(self._provider)
+
         settings = Container(
             Static("Settings", id="settings-title"),
             Static("LLM Provider"),
@@ -635,10 +699,11 @@ class _CraftApp(App):
                 ListItem(Label("Ollama (remote)", classes="menu-item")),
                 id="provider-options",
             ),
-            Static("API Key"),
-            Input(
-                placeholder="Enter API key",
-                password=True,
+            Static(f"Model: {model_name}", id="model-display"),
+            Static(self._get_api_key_label(), id="api-key-label"),
+            _PasteableInput(
+                placeholder="Enter API key (Ctrl+V to paste)",
+                password=False,
                 id="api-key-input",
                 value=self._api_key,
             ),
@@ -668,7 +733,7 @@ class _CraftApp(App):
             self._refresh_menu_prefixes()
 
     def _save_settings(self) -> None:
-        api_key_input = self.query_one("#api-key-input", Input)
+        api_key_input = self.query_one("#api-key-input", _PasteableInput)
 
         provider_value = self._provider
         if self.query("#provider-options"):
@@ -679,6 +744,10 @@ class _CraftApp(App):
 
         self._provider = provider_value
         self._api_key = api_key_input.value
+
+        # Save the API key for this provider (so it persists when switching providers)
+        if self._api_key:
+            self._saved_api_keys[self._provider] = self._api_key
 
         self.query_one("#provider-hint", Static).update(
             f"Model Provider: {self._provider}"
@@ -1007,8 +1076,42 @@ class _CraftApp(App):
             self._refresh_menu_prefixes()
         elif event.list_view.id == "provider-options":
             self._refresh_provider_prefixes()
+            self._on_provider_selection_changed()
         elif event.list_view.id == "settings-actions-list":
             self._refresh_settings_actions_prefixes()
+
+    def _on_provider_selection_changed(self) -> None:
+        """Handle provider selection change in settings."""
+        if not self.query("#provider-options"):
+            return
+
+        providers = self.query_one("#provider-options", ListView)
+        idx = providers.index if providers.index is not None else 0
+        if idx >= len(self._SETTINGS_PROVIDER_VALUES):
+            return
+
+        new_provider = self._SETTINGS_PROVIDER_VALUES[idx]
+        if new_provider == self._settings_provider:
+            return
+
+        # Provider changed
+        self._settings_provider = new_provider
+
+        # Update API key label
+        if self.query("#api-key-label"):
+            provider_name = self._PROVIDER_API_KEY_NAMES.get(new_provider, new_provider)
+            self.query_one("#api-key-label", Static).update(f"API Key for {provider_name}")
+
+        # Update model display
+        if self.query("#model-display"):
+            model_name = self._get_model_for_provider(new_provider)
+            self.query_one("#model-display", Static).update(f"Model: {model_name}")
+
+        # Reset API key input if there's no saved key for this provider
+        if self.query("#api-key-input"):
+            api_key_input = self.query_one("#api-key-input", _PasteableInput)
+            saved_key = self._saved_api_keys.get(new_provider, "")
+            api_key_input.value = saved_key
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         list_id = event.list_view.id
@@ -1367,7 +1470,18 @@ class TUIInterface:
 
     async def _handle_action_event(self, kind: str, message: str, *, style: str = "action") -> None:
         """Record an action update and refresh the status bar."""
-        entry_key = f"{style}:{message}"
+        # Extract action name from display message formats:
+        # action_start: "Running {action_name}" -> extract action_name
+        # action_end: "{action_name} → completed/failed" -> extract action_name
+        if kind == "action_start" and message.startswith("Running "):
+            action_name = message[8:]  # Remove "Running " prefix
+        elif kind == "action_end" and " → " in message:
+            action_name = message.split(" → ")[0]
+        else:
+            action_name = message
+
+        # Use action name as the consistent key
+        entry_key = f"{style}:{action_name}"
 
         # Handle task start
         if kind == "task_start":
@@ -1397,7 +1511,7 @@ class TUIInterface:
             self._agent_state = "working"
             entry = _ActionEntry(
                 kind=kind,
-                message=message,
+                message=action_name,  # Use just the action name
                 style=style,
                 is_completed=False,
                 parent_task=self._current_task_name
