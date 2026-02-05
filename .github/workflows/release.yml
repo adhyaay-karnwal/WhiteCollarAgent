@@ -118,13 +118,16 @@ jobs:
             --collect-submodules core \
             --collect-submodules agents \
             --collect-submodules decorators \
+            --collect-submodules chromadb \
+            --hidden-import onnxruntime \
+            --hidden-import tokenizers \
+            --collect-all rich \
             --exclude-module torch \
             --exclude-module torchvision \
             --exclude-module torchaudio \
             --exclude-module triton \
             --exclude-module nvidia \
             --exclude-module transformers \
-            --exclude-module onnxruntime \
             --exclude-module cv2 \
             --exclude-module matplotlib \
             --exclude-module tensorflow \

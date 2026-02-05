@@ -27,3 +27,4 @@ build/
 debug_images
 .vscode/
 .idea/
+*.spec

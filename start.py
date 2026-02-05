@@ -156,6 +156,23 @@ def launch_background_command(cmd_list: list[str], cwd: Optional[str] = None, en
          print(f"⚠️ Error launching background process: {e}")
          return None
 
+def wait_for_port(host: str, port: int, timeout_seconds: int = 120) -> bool:
+    """Wait until a TCP port is accepting connections."""
+    import socket
+    print(f"⏳ Waiting for {host}:{port} to accept connections (Timeout: {timeout_seconds}s)...", end="", flush=True)
+    start_time = time.time()
+    while time.time() - start_time < timeout_seconds:
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                print(" ✅ Ready!")
+                return True
+        except (OSError, TimeoutError):
+            pass
+        print(".", end="", flush=True)
+        time.sleep(1)
+    print(f"\n❌ Error: {host}:{port} did not become ready within {timeout_seconds} seconds.")
+    return False
+
 def wait_for_server_health(url: str, timeout_seconds: int = 180) -> bool:
     """
     Repeatedly polls a HTTP URL until it returns a 200 OK status or times out.
@@ -164,11 +181,15 @@ def wait_for_server_health(url: str, timeout_seconds: int = 180) -> bool:
     start_time = time.time()
     while time.time() - start_time < timeout_seconds:
         try:
-            req = urllib.request.Request(url, method='HEAD')
-            with urllib.request.urlopen(req, timeout=1) as response:
-                if response.status == 200:
+            with urllib.request.urlopen(url, timeout=3) as response:
+                if response.status < 400:
                     print(" ✅ Ready!")
                     return True
+        except urllib.error.HTTPError as e:
+            # Any HTTP response (even 4xx/5xx) means server is up
+            if e.code < 500:
+                print(" ✅ Ready!")
+                return True
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             pass
         except Exception as e:
@@ -605,11 +626,123 @@ def launch_in_new_terminal(conda_env_name: Optional[str] = None, conda_base_path
     print("✅ Setup script finished.")
     sys.exit(0)
 
+# --- Docker helpers for frozen exe ---
+# GHCR image names (repo is zfoong/WhiteCollarAgent, GHCR lowercases)
+GHCR_DESKTOP_IMAGE = "ghcr.io/zfoong/whitecollagent-desktop:latest"
+GHCR_OMNIPARSER_IMAGE = "ghcr.io/zfoong/whitecollagent-omniparser:latest"
+
+def _docker_available() -> bool:
+    """Check if Docker CLI is available and daemon is running."""
+    try:
+        result = subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=10
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+def _container_running(name: str) -> bool:
+    """Check if a Docker container with the given name is already running."""
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", name],
+            capture_output=True, text=True, timeout=10
+        )
+        return result.returncode == 0 and "true" in result.stdout.lower()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+def _start_docker_services(use_omniparser: bool):
+    """Pull and start desktop (and optionally omniparser) containers."""
+    if not _docker_available():
+        print("[!] Docker is not available. Install Docker to use GUI mode.")
+        print("[!] Continuing without Docker containers...")
+        return
+
+    # --- Desktop container ---
+    if _container_running("simple-agent-desktop"):
+        print("[*] Desktop container already running.")
+    else:
+        print("[*] Starting desktop container...")
+        # Remove stopped container with same name if it exists
+        subprocess.run(["docker", "rm", "-f", "simple-agent-desktop"],
+                       capture_output=True, timeout=30)
+        desktop_cmd = [
+            "docker", "run", "-d",
+            "--name", "simple-agent-desktop",
+            "--security-opt", "seccomp=unconfined",
+            "-e", "PUID=1000", "-e", "PGID=1000", "-e", "TZ=Etc/UTC",
+            "-e", "CUSTOM_USER=agent", "-e", "PASSWORD=password",
+            "-e", "RESOLUTION=1064x1064",
+            "-e", "SELKIES_IS_MANUAL_RESOLUTION_MODE=true",
+            "-e", "SELKIES_MANUAL_WIDTH=1064",
+            "-e", "SELKIES_MANUAL_HEIGHT=1064",
+            "-p", "3001:3000",
+            "--shm-size=2g",
+            GHCR_DESKTOP_IMAGE,
+        ]
+        result = subprocess.run(desktop_cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            print(f"[!] Failed to start desktop container: {result.stderr.strip()}")
+        else:
+            print("[*] Desktop container started.")
+
+    # Wait for desktop to be healthy (TCP check — it's a WebRTC/VNC server, not plain HTTP)
+    print("[*] Waiting for desktop to be ready...")
+    if wait_for_port("localhost", 3001, timeout_seconds=120):
+        print("[*] Desktop is ready at http://localhost:3001")
+    else:
+        print("[!] Desktop did not become ready in time. Continuing anyway...")
+
+    # --- OmniParser container ---
+    if use_omniparser:
+        if _container_running("omniparser-server"):
+            print("[*] OmniParser container already running.")
+        else:
+            print("[*] Starting OmniParser container (first run downloads ~4GB model weights)...")
+            subprocess.run(["docker", "rm", "-f", "omniparser-server"],
+                           capture_output=True, timeout=30)
+            omni_cmd = [
+                "docker", "run", "-d",
+                "--name", "omniparser-server",
+                "-v", "omniparser-weights:/app/OmniParser/weights",
+                "-p", "7861:7861",
+                "-e", "HF_HUB_ENABLE_HF_TRANSFER=1",
+                GHCR_OMNIPARSER_IMAGE,
+            ]
+            result = subprocess.run(omni_cmd, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                print(f"[!] Failed to start OmniParser container: {result.stderr.strip()}")
+            else:
+                print("[*] OmniParser container started.")
+
+        print("[*] Waiting for OmniParser to be ready (this may take a few minutes on first run)...")
+        if wait_for_server_health(OMNIPARSER_SERVER_URL, timeout_seconds=300):
+            os.environ["OMNIPARSER_BASE_URL"] = OMNIPARSER_SERVER_URL
+            print(f"[*] OmniParser is ready at {OMNIPARSER_SERVER_URL}")
+        else:
+            print("[!] OmniParser did not become ready in time. Disabling omniparser.")
+            print("[!] Check: docker logs omniparser-server")
+            os.environ["USE_OMNIPARSER"] = "False"
+
 # --- Frozen exe entry point ---
 def run_frozen():
     """When running as a PyInstaller exe, skip env setup and run the agent directly."""
     args_set = set(sys.argv[1:])
     initialize_environment(args_set)
+
+    # Copy .env.example to CWD on first run so users have a template
+    env_file = os.path.join(os.getcwd(), ".env")
+    if not os.path.exists(env_file):
+        example = os.path.join(BASE_DIR, ".env.example")
+        if os.path.exists(example):
+            shutil.copy2(example, env_file)
+            print("[*] Created .env file from template — edit it with your API keys.")
+            print(f"[*] Location: {env_file}")
+
+    # Start Docker containers (desktop + optionally omniparser)
+    use_omniparser = os.getenv("USE_OMNIPARSER", "True") == "True"
+    _start_docker_services(use_omniparser)
 
     # Import and run core.main directly (deps are already bundled in the exe)
     sys.path.insert(0, BASE_DIR)
