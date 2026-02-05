@@ -115,24 +115,21 @@ jobs:
             --clean \
             --onefile \
             --name WhiteCollarAgent \
-            --hidden-import core \
-            --hidden-import core.main \
-            --hidden-import core.agent_base \
-            --hidden-import core.config \
-            --hidden-import core.logger \
-            --hidden-import core.llm_interface \
-            --hidden-import core.vlm_interface \
-            --hidden-import core.context_engine \
-            --hidden-import core.database_interface \
-            --hidden-import core.embedding_interface \
-            --hidden-import core.google_gemini_client \
-            --hidden-import core.trigger \
-            --hidden-import core.prompt \
-            --hidden-import core.tui_interface \
-            --hidden-import core.internal_action_interface \
             --collect-submodules core \
             --collect-submodules agents \
             --collect-submodules decorators \
+            --exclude-module torch \
+            --exclude-module torchvision \
+            --exclude-module torchaudio \
+            --exclude-module triton \
+            --exclude-module nvidia \
+            --exclude-module scipy \
+            --exclude-module transformers \
+            --exclude-module onnxruntime \
+            --exclude-module cv2 \
+            --exclude-module pandas \
+            --exclude-module matplotlib \
+            --exclude-module tensorflow \
             --add-data "assets${{ matrix.data_sep }}assets" \
             --add-data "config.json${{ matrix.data_sep }}." \
             --add-data ".env.example${{ matrix.data_sep }}." \
