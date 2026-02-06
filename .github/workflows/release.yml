@@ -121,7 +121,6 @@ jobs:
             --collect-submodules chromadb \
             --hidden-import onnxruntime \
             --hidden-import tokenizers \
-            --collect-all rich \
             --exclude-module torch \
             --exclude-module torchvision \
             --exclude-module torchaudio \
@@ -131,6 +130,8 @@ jobs:
             --exclude-module cv2 \
             --exclude-module matplotlib \
             --exclude-module tensorflow \
+            --additional-hooks-dir hooks \
+            --runtime-hook rthooks/rthook-rich-unicode.py \
             --add-data "assets${{ matrix.data_sep }}assets" \
             --add-data "config.json${{ matrix.data_sep }}." \
             --add-data ".env.example${{ matrix.data_sep }}." \
@@ -192,4 +193,4 @@ jobs:
 
             ### Standalone Binary
             Download the binary for your platform from the assets below.
-            Requires Docker for GUI mode. Run with `--no-omniparser` to skip OmniParser setup. Run with `--no-conda` to skip conda setup and use system Python instead.
+            Requires Docker for GUI mode and Omniparser. Run with `--no-omniparser` to skip OmniParser setup. Run with `--no-conda` to skip conda setup and use system Python instead.

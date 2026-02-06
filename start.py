@@ -725,6 +725,27 @@ def _start_docker_services(use_omniparser: bool):
             print("[!] Check: docker logs omniparser-server")
             os.environ["USE_OMNIPARSER"] = "False"
 
+# --- Docker cleanup for frozen exe ---
+_docker_stopped = False
+
+def _stop_docker_services():
+    """Stop desktop and omniparser containers on exit."""
+    global _docker_stopped
+    if _docker_stopped:
+        return
+    _docker_stopped = True
+    print("\n[*] Stopping Docker containers...")
+    for name in ("simple-agent-desktop", "omniparser-server"):
+        try:
+            result = subprocess.run(
+                ["docker", "stop", name],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                print(f"[*] Stopped {name}")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
 # --- Frozen exe entry point ---
 def run_frozen():
     """When running as a PyInstaller exe, skip env setup and run the agent directly."""
@@ -744,10 +765,19 @@ def run_frozen():
     use_omniparser = os.getenv("USE_OMNIPARSER", "True") == "True"
     _start_docker_services(use_omniparser)
 
+    # Register cleanup to stop containers on exit
+    import atexit
+    atexit.register(_stop_docker_services)
+
     # Import and run core.main directly (deps are already bundled in the exe)
     sys.path.insert(0, BASE_DIR)
     from core.main import main as core_main
-    core_main()
+    try:
+        core_main()
+    except KeyboardInterrupt:
+        print("\n[*] Interrupted by user.")
+    finally:
+        _stop_docker_services()
 
 # --- Main Execution ---
 if __name__ == "__main__":
