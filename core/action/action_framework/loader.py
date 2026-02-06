@@ -21,8 +21,11 @@ def load_actions_from_directories(base_dir: str = None, paths_to_scan: List[str]
     Importing them triggers the @action decorator, registering them in the registry.
     """
     if base_dir is None:
-         # Assuming app is run from project root
-        base_dir = os.getcwd()
+        if getattr(sys, 'frozen', False):
+            # PyInstaller bundles action files inside the temp _MEIPASS directory
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.getcwd()
 
     if paths_to_scan is None:
         paths_to_scan = DEFAULT_ACTION_PATHS
