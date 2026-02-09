@@ -21,9 +21,12 @@
   <a href="https://discord.gg/ZN9YHc37HG">
     <img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white" alt="Discord">
   </a>
-  
+<br/>
+<br/>
+
+[![SPONSORED BY E2B FOR STARTUPS](https://img.shields.io/badge/SPONSORED%20BY-E2B%20FOR%20STARTUPS-ff8800?style=for-the-badge)](https://e2b.dev/startups)
 </div>
-<br>
+
 <p align="center">
   <a href="README.ja.md"> 日本語版はこちら</a> | <a href="README.cn.md"> 中文版README </a>
 </p>
